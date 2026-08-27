@@ -1,7 +1,7 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   checkProviderLaunchAvailable,
@@ -14,10 +14,14 @@ import {
 } from "./provider-launch-config.js";
 
 const originalPath = process.env.PATH;
+const originalPaseoCli = process.env.PASEO_CLI;
 const tempDirs: string[] = [];
 
 afterEach(() => {
   process.env.PATH = originalPath;
+  if (originalPaseoCli === undefined) delete process.env.PASEO_CLI;
+  else process.env.PASEO_CLI = originalPaseoCli;
+  vi.restoreAllMocks();
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -237,13 +241,31 @@ describe("createProviderEnv", () => {
     expect(Object.keys(env).length).toBeGreaterThanOrEqual(3);
   });
 
-  test("runtimeSettings env wins over base env", () => {
-    const base = { PATH: "/usr/bin" };
-    const runtime: ProviderRuntimeSettings = { env: { PATH: "/custom/path" } };
+  test("runtimeSettings PATH and BROWSER survive workspace routing overlays", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const root = mkdtempSync(path.join(tmpdir(), "provider-browser-routing-"));
+    tempDirs.push(root);
+    const cli = path.join(root, "Resources", "bin", "paseo");
+    const wrapper = path.join(root, "Resources", "open-wrapper", "open");
+    mkdirSync(path.dirname(cli), { recursive: true });
+    mkdirSync(path.dirname(wrapper), { recursive: true });
+    writeFileSync(cli, "#!/bin/sh\n");
+    writeFileSync(wrapper, "#!/bin/sh\n");
+    chmodSync(cli, 0o755);
+    chmodSync(wrapper, 0o755);
+    process.env.PASEO_CLI = cli;
+    const runtime: ProviderRuntimeSettings = {
+      env: { PATH: "/custom/path", BROWSER: "/custom/browser" },
+    };
 
-    const env = createProviderEnv({ baseEnv: base, runtimeSettings: runtime });
+    const env = createProviderEnv({
+      baseEnv: {},
+      runtimeSettings: runtime,
+      overlays: [{ PASEO_WORKSPACE_ID: "workspace-1" }],
+    });
 
-    expect(env.PATH).toBe("/custom/path");
+    expect(env.PATH).toBe(`${path.dirname(realpathSync(wrapper))}${path.delimiter}/custom/path`);
+    expect(env.BROWSER).toBe("/custom/browser");
   });
 
   test("strips parent Claude Code session env vars without removing SDK child flags", () => {

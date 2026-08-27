@@ -506,22 +506,38 @@ export const BrowserAutomationExecuteRequestSchema = z
   })
   .strict();
 
+export const BrowserAutomationResponsePayloadSchema = z.discriminatedUnion("ok", [
+  z.object({
+    requestId: z.string().min(1),
+    ok: z.literal(true),
+    result: BrowserAutomationResultSchema,
+    dialogs: z.array(BrowserAutomationDialogEventSchema).optional(),
+  }),
+  z.object({
+    requestId: z.string().min(1),
+    ok: z.literal(false),
+    error: BrowserAutomationErrorSchema,
+    dialogs: z.array(BrowserAutomationDialogEventSchema).optional(),
+  }),
+]);
+
 export const BrowserAutomationExecuteResponseSchema = z.object({
   type: z.literal("browser.automation.execute.response"),
-  payload: z.discriminatedUnion("ok", [
-    z.object({
-      requestId: z.string().min(1),
-      ok: z.literal(true),
-      result: BrowserAutomationResultSchema,
-      dialogs: z.array(BrowserAutomationDialogEventSchema).optional(),
-    }),
-    z.object({
-      requestId: z.string().min(1),
-      ok: z.literal(false),
-      error: BrowserAutomationErrorSchema,
-      dialogs: z.array(BrowserAutomationDialogEventSchema).optional(),
-    }),
-  ]),
+  payload: BrowserAutomationResponsePayloadSchema,
+});
+
+export const BrowserCommandExecuteRequestSchema = z.object({
+  type: z.literal("browser.command.execute.request"),
+  requestId: z.string().min(1),
+  agentId: z.string().min(1).optional(),
+  cwd: z.string().min(1).optional(),
+  workspaceId: z.string().min(1).optional(),
+  command: BrowserAutomationCommandSchema,
+});
+
+export const BrowserCommandExecuteResponseSchema = z.object({
+  type: z.literal("browser.command.execute.response"),
+  payload: BrowserAutomationResponsePayloadSchema,
 });
 
 export type BrowserAutomationErrorCode = z.infer<typeof BrowserAutomationErrorCodeSchema>;
@@ -539,3 +555,5 @@ export type BrowserAutomationExecuteRequest = z.infer<typeof BrowserAutomationEx
 export type BrowserAutomationExecuteResponse = z.infer<
   typeof BrowserAutomationExecuteResponseSchema
 >;
+export type BrowserCommandExecuteRequest = z.infer<typeof BrowserCommandExecuteRequestSchema>;
+export type BrowserCommandExecuteResponse = z.infer<typeof BrowserCommandExecuteResponseSchema>;

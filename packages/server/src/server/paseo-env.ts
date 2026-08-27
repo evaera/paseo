@@ -1,3 +1,5 @@
+import { injectBrowserLinkRouting } from "./browser-link-routing.js";
+
 const PASEO_NODE_ENV = "PASEO_NODE_ENV";
 const ELECTRON_RUN_AS_NODE = "ELECTRON_RUN_AS_NODE";
 
@@ -31,7 +33,7 @@ function buildExternalProcessEnv(
       delete sanitized[key];
     }
   }
-  return sanitized as ExternalProcessEnv;
+  return injectBrowserLinkRouting(sanitized as ExternalProcessEnv) as ExternalProcessEnv;
 }
 
 export function createPaseoInternalEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

@@ -70,6 +70,14 @@ PASEO_DEV_RESET_HOME=1 npm run dev            # clear and reseed the derived wor
 
 In Paseo-managed worktree services, use the injected service environment rather than hardcoded root checkout ports.
 
+### Workspace browser link routing
+
+On macOS, agents and terminals started in a workspace receive `BROWSER` and `PATH` entries for Paseo's packaged `open` wrapper. Plain HTTP(S) links opened by tools such as Plannotator are sent to `paseo browser open` and appear in that workspace's in-app browser. Explicit `open` flags, non-HTTP schemes, processes without `PASEO_WORKSPACE_ID`, and failed routing use `/usr/bin/open` unchanged.
+
+Set `PASEO_BROWSER_OPEN_EXTERNAL=1` for a process that must always use the system browser, or run `paseo browser open --external <http(s)-url>`. `paseo browser open <url>` uses `PASEO_WORKSPACE_ID` when `--workspace` is omitted. An explicitly configured `BROWSER` is preserved; set `PASEO_BROWSER_OPEN_OVERRIDE=1` to replace it with Paseo's wrapper.
+
+MCP keeps `browser_new_tab` as its in-app open operation. There is no external-open MCP tool because an agent-safe external opener does not exist: invoking the host's default browser is a user-visible host action that bypasses the workspace browser boundary. The CLI escape hatch remains an explicit local process action.
+
 ### Expo Router
 
 Route ownership, startup restore, and native blank-screen gotchas live in

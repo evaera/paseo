@@ -46,6 +46,8 @@ mac:
   extraResources:
     - from: bin/paseo
       to: bin/paseo
+    - from: ../cli/bin/open
+      to: open-wrapper/open
     - from: assets/icon.png
       to: icon.png
   target:

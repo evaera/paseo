@@ -154,8 +154,10 @@ import {
 } from "./compat/normalize-provider-models.js";
 import { TerminalStreamRouter, type TerminalStreamEvent } from "./terminal-stream-router.js";
 import type {
+  BrowserAutomationCommand,
   BrowserAutomationExecuteRequest,
   BrowserAutomationExecuteResponse,
+  BrowserCommandExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 
 export interface Logger {
@@ -4745,6 +4747,23 @@ export class DaemonClient {
 
   sendBrowserAutomationExecuteResponse(response: BrowserAutomationExecuteResponse): void {
     this.sendSessionMessageStrict(response);
+  }
+
+  async executeBrowserCommand(
+    command: BrowserAutomationCommand,
+    options?: { workspaceId?: string; cwd?: string; agentId?: string; requestId?: string },
+  ): Promise<BrowserCommandExecuteResponse["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: {
+        type: "browser.command.execute.request",
+        command,
+        ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
+        ...(options?.cwd ? { cwd: options.cwd } : {}),
+        ...(options?.agentId ? { agentId: options.agentId } : {}),
+      },
+      responseType: "browser.command.execute.response",
+    });
   }
 
   async readProjectConfig(repoRoot: string, requestId?: string): Promise<ReadProjectConfigPayload> {

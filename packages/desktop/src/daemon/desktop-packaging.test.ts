@@ -103,11 +103,13 @@ describe("desktop packaging", () => {
     expect(runtimeTrace).toContain('"packages/server/dist/server/skills/**"');
   });
 
-  it("registers Paseo agent links with the operating system", () => {
+  it("registers Paseo agent links and packages the macOS open wrapper", () => {
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
 
     expect(config).toContain("name: Paseo agent link");
     expect(config).toContain("- paseo");
+    expect(config).toContain("from: ../cli/bin/open");
+    expect(config).toContain("to: open-wrapper/open");
   });
 
   // electron-builder packs production dependencies declared in package.json into
