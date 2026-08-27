@@ -146,6 +146,7 @@ Commander.js CLI with Docker-style commands. Common agent operations are also ex
 - `paseo agent ls/run/import/attach/logs/stop/delete/send/inspect/wait/archive/reload/update/mode`
 - `paseo daemon start/stop/restart/status/pair/set-password`
 - `paseo terminal ls/create/capture/send-keys/kill`
+- `paseo layout inspect/open/split/move-tab/move-pane`
 - `paseo script ls/start/stop`
 - `paseo schedule create/ls/inspect/update/pause/resume/run-once/logs/delete`
 - `paseo heartbeat create/update/delete`
@@ -200,6 +201,8 @@ file after the daemon confirms persistence.
 > **In-app browser window opens.** Ordinary link opens, including Shift-clicked links, become Paseo workspace tabs. Script-created opens with popup features or a named window target and POST-backed opens remain secured Electron child windows in the shared browser profile, preserving `window.opener`, `postMessage`, named-window reuse, request bodies, and `window.close()` for OAuth, payment, and similar popup protocols. Unsupported URL schemes are denied before either path.
 >
 > **In-app browser ownership.** Each registered guest records its owning host window. The active browser is keyed by `(host window, workspace)`, and application-menu Reload / Force Reload resolve only within the window Electron supplies to the menu callback. A non-null active update must name a browser owned by that host; a null update clears only that host/workspace. Browser automation continues to target explicit browser ids returned by `browser_new_tab` or `browser_list_tabs`.
+>
+> **Workspace layout control.** Pane trees and browser tabs are client-local. The daemon brokers `workspace.layout.execute` requests from the CLI and transport-neutral agent tools to a connected app layout host. Inspection returns stable workspace, pane, and tab IDs; mutations use those IDs rather than daemon layout policy. Tab placement can name an existing pane or create a left, right, top, or bottom split.
 >
 > **Browser keyboard boundary.** Guest pages receive renderer-published shortcuts first. `Cmd/Ctrl+L` and `Cmd/Ctrl+R` are explicit guest-shell reservations; ordinary Paseo shortcuts run only after the page declines them. The sandboxed guest preload runs in every frame so focused iframes use the same boundary, while Node integration remains disabled. Human guest input disables Electron's menu fallback for plain keys. Agent-generated keys use guest `sendInputEvent` with `skipIfUnhandled`, so an unhandled Enter stops at the guest instead of reaching the host composer. Main selects the preload; it exposes no APIs to guest pages.
 

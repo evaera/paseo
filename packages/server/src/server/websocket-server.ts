@@ -96,6 +96,12 @@ import {
   type BrowserAutomationHostCapability,
 } from "@getpaseo/protocol/browser-automation/capabilities";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
+import type { WorkspaceLayoutBroker } from "./workspace-layout/broker.js";
+import type { WorkspaceLayoutExecuteResponse } from "@getpaseo/protocol/workspace-layout/rpc-schemas";
+import {
+  WorkspaceLayoutHostCapabilitySchema,
+  type WorkspaceLayoutHostCapability,
+} from "@getpaseo/protocol/workspace-layout/capabilities";
 import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import type { WorkspaceLabelService } from "./workspace-labels/index.js";
@@ -406,6 +412,15 @@ function bufferFromWsData(data: Buffer | ArrayBuffer | Buffer[] | string): Buffe
   return Buffer.from(data);
 }
 
+function getWorkspaceLayoutHostCapability(
+  capabilities: Record<string, unknown> | null,
+): WorkspaceLayoutHostCapability | null {
+  const parsed = WorkspaceLayoutHostCapabilitySchema.safeParse(
+    capabilities?.[CLIENT_CAPS.workspaceLayoutHost],
+  );
+  return parsed.success ? parsed.data : null;
+}
+
 function getBrowserHostCapability(
   capabilities: Record<string, unknown> | null,
 ): BrowserAutomationHostCapability | null {
@@ -597,8 +612,10 @@ export class VoiceAssistantWebSocketServer {
   private readonly providerUsageService: ProviderUsageService;
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private readonly browserToolsBroker: BrowserToolsBroker | null;
+  private readonly workspaceLayoutBroker: WorkspaceLayoutBroker | null;
   private readonly hubRelationships: HubRelationshipManagement | null;
   private readonly browserToolsRegistrations = new Map<string, BrowserToolsRegistration>();
+  private readonly workspaceLayoutRegistrations = new Map<string, () => void>();
   private connectionLifecycle: "starting" | "accepting" | "stopping" = "accepting";
   private readonly advertiseDaemonStatusRpc: boolean;
   private readonly advertiseRelayConfig: boolean;
@@ -648,6 +665,7 @@ export class VoiceAssistantWebSocketServer {
     serviceProxyPublicBaseUrl?: string | null,
     browserToolsBroker?: BrowserToolsBroker | null,
     hubRelationships?: HubRelationshipManagement | null,
+    workspaceLayoutBroker?: WorkspaceLayoutBroker | null,
     workspaceSetupRuntime: WorkspaceSetupRuntime = new WorkspaceSetupRuntime(),
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
@@ -665,6 +683,7 @@ export class VoiceAssistantWebSocketServer {
     this.daemonVersion = daemonVersion.trim();
     this.daemonRuntimeConfig = daemonRuntimeConfig;
     this.browserToolsBroker = browserToolsBroker ?? null;
+    this.workspaceLayoutBroker = workspaceLayoutBroker ?? null;
     this.hubRelationships = hubRelationships ?? null;
     this.pluginRuntime = pluginRuntime;
     this.orchestrationSkills = orchestrationSkills;
@@ -1127,8 +1146,11 @@ export class VoiceAssistantWebSocketServer {
     this.sessions.clear();
     this.socketIdentities.clear();
     this.externalSessionsByKey.clear();
-    for (const clientId of this.browserToolsRegistrations.keys()) {
-      this.unregisterBrowserToolsClient(clientId);
+    for (const clientId of new Set([
+      ...this.browserToolsRegistrations.keys(),
+      ...this.workspaceLayoutRegistrations.keys(),
+    ])) {
+      this.unregisterClientToolRegistrations(clientId);
     }
     this.wss.close();
   }
@@ -1580,7 +1602,7 @@ export class VoiceAssistantWebSocketServer {
       this.externalSessionsByKey.set(clientId, connection);
     }
     pending.identity.sessionId = connection.session.getSessionId();
-    this.syncBrowserToolsClientRegistration(connection);
+    this.syncClientToolRegistrations(connection);
     this.sendToClient(ws, this.createServerInfoMessage());
     connection.connectionLogger.info(
       {
@@ -1619,12 +1641,12 @@ export class VoiceAssistantWebSocketServer {
       JSON.stringify(newClientCapabilities ?? null)
     ) {
       existing.clientCapabilities = newClientCapabilities;
-      this.syncBrowserToolsClientRegistration(existing);
+      this.syncClientToolRegistrations(existing);
     }
     existing.sockets.add(ws);
     this.sessions.set(ws, existing);
     pending.identity.sessionId = existing.session.getSessionId();
-    this.syncBrowserToolsClientRegistration(existing);
+    this.syncClientToolRegistrations(existing);
     this.sendToClient(ws, this.createServerInfoMessage());
     pending.connectionLogger.info(
       {
@@ -1650,6 +1672,8 @@ export class VoiceAssistantWebSocketServer {
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         ...(this.workspaceLabelService ? { workspaceLabels: true } : {}),
+        // COMPAT(workspaceLayouts): added in v0.8.0, remove after 2027-09-01.
+        ...(this.workspaceLayoutBroker ? { workspaceLayouts: true } : {}),
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
@@ -1902,7 +1926,7 @@ export class VoiceAssistantWebSocketServer {
     this.socketIdentities.delete(ws);
 
     if (connection.sockets.size === 0) {
-      this.unregisterBrowserToolsClient(connection.clientId);
+      this.unregisterClientToolRegistrations(connection.clientId);
       if (connection.lifecycle === "ephemeral-plugin") {
         this.pluginSocketIds.delete(ws);
         await this.cleanupConnection(connection, "Plugin session disconnected");
@@ -1980,13 +2004,18 @@ export class VoiceAssistantWebSocketServer {
         this.externalSessionsByKey.delete(connection.clientId);
       }
     }
-    this.unregisterBrowserToolsClient(connection.clientId);
+    this.unregisterClientToolRegistrations(connection.clientId);
 
     connection.connectionLogger.trace(
       { clientId: connection.clientId, totalSessions: this.sessions.size },
       logMessage,
     );
     await connection.session.cleanup();
+  }
+
+  private syncClientToolRegistrations(connection: TrustedSessionConnection): void {
+    this.syncBrowserToolsClientRegistration(connection);
+    this.syncWorkspaceLayoutClientRegistration(connection);
   }
 
   private syncBrowserToolsClientRegistration(connection: TrustedSessionConnection): void {
@@ -2020,6 +2049,28 @@ export class VoiceAssistantWebSocketServer {
       capabilitySignature,
       unregister,
     });
+  }
+
+  private syncWorkspaceLayoutClientRegistration(connection: TrustedSessionConnection): void {
+    this.workspaceLayoutRegistrations.get(connection.clientId)?.();
+    this.workspaceLayoutRegistrations.delete(connection.clientId);
+    const capability = getWorkspaceLayoutHostCapability(connection.clientCapabilities);
+    if (!capability || !this.workspaceLayoutBroker) return;
+    const unregister = this.workspaceLayoutBroker.registerClient({
+      clientId: connection.clientId,
+      hostInstanceId: capability.hostInstanceId,
+      hostKind: capability.hostKind,
+      sendWorkspaceLayoutRequest: (request) => {
+        this.sendToConnection(connection, wrapSessionMessage(request));
+      },
+    });
+    this.workspaceLayoutRegistrations.set(connection.clientId, unregister);
+  }
+
+  private unregisterClientToolRegistrations(clientId: string): void {
+    this.unregisterBrowserToolsClient(clientId);
+    this.workspaceLayoutRegistrations.get(clientId)?.();
+    this.workspaceLayoutRegistrations.delete(clientId);
   }
 
   private unregisterBrowserToolsClient(clientId: string): void {
@@ -2296,12 +2347,51 @@ export class VoiceAssistantWebSocketServer {
         "ws_control_rpc_received",
       );
     }
-    if (
-      activeConnection.kind === "trusted" &&
-      message.message.type === "browser.automation.execute.response"
-    ) {
-      this.browserToolsBroker?.receiveResponse(message.message as BrowserAutomationExecuteResponse);
-      return;
+    if (activeConnection.kind === "trusted") {
+      if (message.message.type === "browser.automation.execute.response") {
+        this.browserToolsBroker?.receiveResponse(
+          message.message as BrowserAutomationExecuteResponse,
+        );
+        return;
+      }
+      if (message.message.type === "workspace.layout.execute.response") {
+        const capability = getWorkspaceLayoutHostCapability(activeConnection.clientCapabilities);
+        if (capability) {
+          this.workspaceLayoutBroker?.receiveResponse(
+            message.message as WorkspaceLayoutExecuteResponse,
+            { clientId: activeConnection.clientId, hostInstanceId: capability.hostInstanceId },
+          );
+        }
+        return;
+      }
+      if (message.message.type === "workspace.layout.execute.request") {
+        const request = message.message;
+        const payload = this.workspaceLayoutBroker
+          ? await this.workspaceLayoutBroker.execute({
+              requestId: request.requestId,
+              workspaceId: request.workspaceId,
+              ...(request.agentId ? { agentId: request.agentId } : {}),
+              ...(request.hostInstanceId ? { hostInstanceId: request.hostInstanceId } : {}),
+              command: request.command,
+            })
+          : {
+              status: "error" as const,
+              requestId: request.requestId,
+              ok: false as const,
+              error: {
+                code: "layout_unsupported" as const,
+                message: "Workspace layout control is unavailable.",
+              },
+            };
+        this.sendToConnection(
+          activeConnection,
+          wrapSessionMessage({
+            type: "workspace.layout.execute.response",
+            payload,
+          }),
+        );
+        return;
+      }
     }
 
     const startMs = performance.now();

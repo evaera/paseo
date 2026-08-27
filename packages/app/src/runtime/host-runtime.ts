@@ -53,6 +53,8 @@ import {
   mountServerDataPushRouter,
 } from "@/data/push-router";
 import { mountBrowserAutomationDaemonClientHandler } from "@/desktop/browser/automation/handler";
+import { mountWorkspaceLayoutHandler } from "@/workspace-layout/handler";
+import { supportsDesktopPaneSplits } from "@/constants/layout";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
@@ -474,6 +476,10 @@ function probeIntervalForConnection(
   return PROBE_MAX_BACKOFF_MS;
 }
 
+const workspaceLayoutHostInstanceId =
+  globalThis.crypto?.randomUUID?.() ??
+  `layout-host-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
 function createDefaultDeps(): HostRuntimeControllerDeps {
   const browserHostAvailable =
     typeof getDesktopHost()?.browser?.executeAutomationCommand === "function";
@@ -489,6 +495,14 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
     [CLIENT_CAPS.selectiveAgentTimeline]: true,
     [CLIENT_CAPS.timelineReplacementInvalidation]: true,
     ...browserAutomationCapabilities,
+    ...(supportsDesktopPaneSplits()
+      ? {
+          [CLIENT_CAPS.workspaceLayoutHost]: {
+            hostKind: "Paseo web app",
+            hostInstanceId: workspaceLayoutHostInstanceId,
+          },
+        }
+      : {}),
   };
 
   return {
@@ -552,14 +566,17 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         queryClient,
         serverId: host.serverId,
       });
-      if (!browserAutomationCapabilities) {
-        return unmountServerData;
-      }
-      const unmountBrowserAutomation = mountBrowserAutomationDaemonClientHandler(client, {
-        serverId: host.serverId,
-      });
+      const unmountLayout = supportsDesktopPaneSplits()
+        ? mountWorkspaceLayoutHandler(client, host.serverId, {
+            hostInstanceId: workspaceLayoutHostInstanceId,
+          })
+        : () => {};
+      const unmountBrowserAutomation = browserAutomationCapabilities
+        ? mountBrowserAutomationDaemonClientHandler(client, { serverId: host.serverId })
+        : () => {};
       return () => {
         unmountBrowserAutomation();
+        unmountLayout();
         unmountServerData();
       };
     },

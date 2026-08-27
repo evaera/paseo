@@ -55,6 +55,7 @@ import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { MutableDaemonConfigSchema, type AgentProfile } from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-tools/broker.js";
+import type { WorkspaceLayoutBroker } from "../workspace-layout/broker.js";
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
@@ -874,6 +875,54 @@ describe("browser MCP tools", () => {
       for (const tool of listedTools.tools) {
         expect(tool, `${tool.name} outputSchema`).not.toHaveProperty("outputSchema");
       }
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("exposes workspace layout inspection through the MCP adapter", async () => {
+    const agentManager = new BoundaryAgentManagerFake();
+    const agentStorage = new BoundaryAgentStorageFake();
+    const calls: unknown[] = [];
+    const workspaceLayoutBroker = {
+      execute: async (input: unknown) => {
+        calls.push(input);
+        return {
+          status: "success" as const,
+          requestId: "layout-request",
+          hostInstanceId: "host-1",
+          ok: true as const,
+          result: {
+            command: "get_layout" as const,
+            layout: {
+              workspaceId: BROWSER_WORKSPACE_ID,
+              focusedPaneId: null,
+              root: {
+                kind: "pane" as const,
+                pane: { paneId: "pane-1", focusedTabId: null, tabs: [] },
+              },
+            },
+          },
+        };
+      },
+    };
+    const server = await createAgentMcpServer({
+      agentManager: agentManager as AgentManager,
+      agentStorage: agentStorage as AgentStorage,
+      providerSnapshotManager:
+        new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      workspaceLayoutBroker: workspaceLayoutBroker as WorkspaceLayoutBroker,
+      callerAgentId: "agent-1",
+      logger,
+    });
+    const client = await connectInMemoryMcpClient(server);
+    try {
+      const listed = await client.listTools();
+      expect(listed.tools.map((tool) => tool.name)).toContain("workspace_layout_inspect");
+      const result = await client.callTool({ name: "workspace_layout_inspect", arguments: {} });
+      expect(result.isError).not.toBe(true);
+      expect(calls).toHaveLength(1);
     } finally {
       await client.close();
       await server.close();

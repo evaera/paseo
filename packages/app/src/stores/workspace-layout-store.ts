@@ -60,6 +60,7 @@ import {
 import { normalizeWorkspaceTabTarget } from "@/workspace-tabs/identity";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import { panelTargetSupportsHostForWorkspaceKey } from "@/plugins/workspace-panels/locations";
+import { movePaneInLayout } from "@/stores/workspace-layout-move-pane";
 
 export {
   AMBIENT_PLACEMENT,
@@ -147,6 +148,12 @@ interface WorkspaceLayoutStore {
     },
   ) => string | null;
   moveTabToPane: (workspaceKey: string, tabId: string, toPaneId: string) => void;
+  movePane: (
+    workspaceKey: string,
+    paneId: string,
+    targetPaneId: string,
+    position: "left" | "right" | "top" | "bottom",
+  ) => boolean;
   /**
    * Dismisses the pane along with whatever it still holds. The Explorer hides so the
    * user can bring it back; every ordinary pane is removed. Callers own tab teardown
@@ -1413,6 +1420,39 @@ export function createWorkspaceLayoutStore(
                   : state.sidePaneIdByWorkspace,
             };
           });
+        },
+        movePane: (workspaceKey, paneId, targetPaneId, position) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedPaneId = trimNonEmpty(paneId);
+          const normalizedTargetPaneId = trimNonEmpty(targetPaneId);
+          if (!normalizedWorkspaceKey || !normalizedPaneId || !normalizedTargetPaneId) return false;
+          const layout = getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey);
+          const explorerSidebarPaneId = resolveExplorerSidebarPaneId(
+            layout,
+            get().explorerSidebarPaneIdByWorkspace[normalizedWorkspaceKey],
+          );
+          if (
+            normalizedPaneId === explorerSidebarPaneId ||
+            normalizedTargetPaneId === explorerSidebarPaneId
+          ) {
+            return false;
+          }
+          const nextLayout = movePaneInLayout({
+            layout,
+            paneId: normalizedPaneId,
+            targetPaneId: normalizedTargetPaneId,
+            position,
+            ids,
+          });
+          if (!nextLayout || getTreeDepth(nextLayout.root) > MAX_TREE_DEPTH) return false;
+          set((state) => ({
+            ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            layoutByWorkspace: {
+              ...state.layoutByWorkspace,
+              [normalizedWorkspaceKey]: nextLayout,
+            },
+          }));
+          return true;
         },
         closePane: (workspaceKey, paneId) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);

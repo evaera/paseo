@@ -85,6 +85,8 @@ import {
 } from "../../worktree/commands.js";
 import { registerBrowserTools } from "../../browser-tools/tools.js";
 import type { BrowserToolsBroker } from "../../browser-tools/broker.js";
+import { registerWorkspaceLayoutTools } from "../../workspace-layout/tools.js";
+import type { WorkspaceLayoutBroker } from "../../workspace-layout/broker.js";
 import type {
   PaseoToolCatalog,
   PaseoToolConfig,
@@ -128,6 +130,7 @@ export interface PaseoToolHostDependencies {
   ) => Promise<string>;
   browserToolsEnabled?: boolean;
   browserToolsBroker?: BrowserToolsBroker | null;
+  workspaceLayoutBroker?: WorkspaceLayoutBroker | null;
   paseoHome?: string;
   worktreesRoot?: string;
   /**
@@ -1204,6 +1207,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       registerTool,
       broker: options.browserToolsBroker,
       callerAgentId,
+      resolveCallerAgent,
+    });
+  }
+  if (options.workspaceLayoutBroker) {
+    registerWorkspaceLayoutTools({
+      registerTool,
+      broker: options.workspaceLayoutBroker,
       resolveCallerAgent,
     });
   }
