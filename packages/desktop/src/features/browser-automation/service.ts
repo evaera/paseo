@@ -247,6 +247,12 @@ type CommandHandler = (
 const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandler> = {
   list_tabs: ({ requestId, workspaceId, registry }) =>
     executeListTabs(requestId, workspaceId, registry),
+  list_profiles: ({ requestId }) =>
+    fail(requestId, "browser_unsupported", "browser_list_profiles is handled by the app runtime."),
+  create_profile: ({ requestId }) =>
+    fail(requestId, "browser_unsupported", "browser_create_profile is handled by the app runtime."),
+  delete_profile: ({ requestId }) =>
+    fail(requestId, "browser_unsupported", "browser_delete_profile is handled by the app runtime."),
   new_tab: ({ requestId }) =>
     fail(requestId, "browser_unsupported", "browser_new_tab is handled by the app runtime."),
   snapshot: ({ command, requestId, workspaceId, registry, snapshotEngine }) => {

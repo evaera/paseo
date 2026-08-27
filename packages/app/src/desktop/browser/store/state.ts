@@ -6,8 +6,11 @@ export type BrowserViewport =
 
 export const RESPONSIVE_BROWSER_VIEWPORT: BrowserViewport = { mode: "responsive" };
 
+export const DEFAULT_BROWSER_PROFILE_ID = "default";
+
 export interface BrowserRecord {
   browserId: string;
+  profileId: string;
   url: string;
   title: string;
   isLoading: boolean;
@@ -36,6 +39,7 @@ const BrowserViewportSchema = z.discriminatedUnion("mode", [
 
 const BrowserRecordSchema = z.strictObject({
   browserId: z.string(),
+  profileId: z.string().min(1).optional().default(DEFAULT_BROWSER_PROFILE_ID),
   url: z.string(),
   title: z.string(),
   isLoading: z.boolean(),
@@ -106,11 +110,13 @@ export function normalizeBrowserUrl(value: string | null | undefined): string {
 
 export function createBrowserRecord(input: {
   browserId: string;
+  profileId?: string;
   initialUrl: string | null | undefined;
   now: number;
 }): BrowserRecord {
   return {
     browserId: input.browserId,
+    profileId: trimNonEmpty(input.profileId) ?? DEFAULT_BROWSER_PROFILE_ID,
     url: normalizeBrowserUrl(input.initialUrl),
     title: "",
     isLoading: false,
@@ -148,6 +154,7 @@ export function applyBrowserPatch<S extends BrowserIndexState>(
   };
 
   if (
+    nextRecord.profileId === existing.profileId &&
     nextRecord.url === existing.url &&
     nextRecord.title === existing.title &&
     nextRecord.isLoading === existing.isLoading &&
@@ -167,6 +174,21 @@ export function applyBrowserPatch<S extends BrowserIndexState>(
       [normalizedBrowserId]: nextRecord,
     },
   };
+}
+
+export function normalizeStaleBrowserProfileIds<S extends BrowserIndexState>(
+  state: S,
+  profileIds: ReadonlySet<string>,
+): S {
+  let changed = false;
+  const browsersById = Object.fromEntries(
+    Object.entries(state.browsersById).map(([browserId, browser]) => {
+      if (profileIds.has(browser.profileId)) return [browserId, browser];
+      changed = true;
+      return [browserId, { ...browser, profileId: DEFAULT_BROWSER_PROFILE_ID }];
+    }),
+  );
+  return changed ? { ...state, browsersById } : state;
 }
 
 export function removeBrowserFromIndex<S extends BrowserIndexState>(

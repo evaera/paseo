@@ -99,6 +99,25 @@ async function handleBrowserAutomationRequest(params: {
   const browserHost = getHost()?.browser;
   const executeAutomationCommand = browserHost?.executeAutomationCommand;
 
+  if (
+    request.command.command === "list_profiles" ||
+    request.command.command === "create_profile" ||
+    request.command.command === "delete_profile"
+  ) {
+    try {
+      client.sendBrowserAutomationExecuteResponse({
+        type: "browser.automation.execute.response",
+        payload: await handleBrowserProfileRequest({ request, browserHost }),
+      });
+    } catch (error) {
+      client.sendBrowserAutomationExecuteResponse({
+        type: "browser.automation.execute.response",
+        payload: normalizeThrownBridgeError(request.requestId, error),
+      });
+    }
+    return;
+  }
+
   if (request.command.command === "new_tab") {
     try {
       client.sendBrowserAutomationExecuteResponse({
@@ -161,7 +180,27 @@ async function handleBrowserAutomationRequest(params: {
   }
 
   try {
-    const payload = await executeAutomationCommand(request);
+    let payload = await executeAutomationCommand(request);
+    if (payload.ok && payload.result.command === "list_tabs" && browserHost?.listProfiles) {
+      const profiles = await browserHost.listProfiles();
+      const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
+      payload = {
+        ...payload,
+        result: {
+          ...payload.result,
+          tabs: payload.result.tabs.map((tab) => {
+            const profileId = getBrowserRecord(tab.browserId)?.profileId ?? "default";
+            const profile = profilesById.get(profileId);
+            return {
+              ...tab,
+              profile: profile?.name ?? "Default",
+              profileId,
+              profileName: profile?.name ?? "Default",
+            };
+          }),
+        },
+      };
+    }
     client.sendBrowserAutomationExecuteResponse({
       type: "browser.automation.execute.response",
       payload: normalizeBridgePayload(request.requestId, payload),
@@ -172,6 +211,96 @@ async function handleBrowserAutomationRequest(params: {
       payload: normalizeThrownBridgeError(request.requestId, error),
     });
   }
+}
+
+async function handleBrowserProfileRequest(params: {
+  request: BrowserAutomationExecuteRequest;
+  browserHost: DesktopHostBridge["browser"] | undefined;
+}): Promise<BrowserAutomationResponsePayload> {
+  const { request, browserHost } = params;
+  const command = request.command;
+  if (!browserHost?.listProfiles) {
+    return browserAutomationFailure({
+      requestId: request.requestId,
+      code: "browser_unsupported",
+      message: "Browser profiles require an updated Paseo desktop host.",
+    });
+  }
+  if (command.command === "list_profiles") {
+    return {
+      requestId: request.requestId,
+      ok: true,
+      result: { command: "list_profiles", profiles: await browserHost.listProfiles() },
+    };
+  }
+  if (command.command === "create_profile") {
+    if (!browserHost.createProfile) {
+      return browserAutomationFailure({
+        requestId: request.requestId,
+        code: "browser_unsupported",
+        message: "Browser profile creation requires an updated Paseo desktop host.",
+      });
+    }
+    return {
+      requestId: request.requestId,
+      ok: true,
+      result: {
+        command: "create_profile",
+        profile: await browserHost.createProfile(command.args.name),
+      },
+    };
+  }
+  const deleteCommand = command as Extract<
+    BrowserAutomationExecuteRequest["command"],
+    { command: "delete_profile" }
+  >;
+  const profiles = await browserHost.listProfiles();
+  const profile = profiles.find(
+    (candidate) =>
+      candidate.id === deleteCommand.args.profile ||
+      candidate.name.toLocaleLowerCase() === deleteCommand.args.profile.toLocaleLowerCase(),
+  );
+  if (!profile || profile.id === "default") {
+    return browserAutomationFailure({
+      requestId: request.requestId,
+      code: "browser_denied",
+      message: profile
+        ? "The Default browser profile cannot be deleted."
+        : `Browser profile not found: ${deleteCommand.args.profile}`,
+    });
+  }
+  const browserState = useBrowserStore.getState();
+  const affectedBrowsers = Object.values(browserState.browsersById).filter(
+    (browser) => browser.profileId === profile.id,
+  );
+  for (const browser of affectedBrowsers) {
+    removeResidentBrowserWebview(browser.browserId);
+    browserState.updateBrowser(browser.browserId, { profileId: "default" });
+  }
+  let deleted = false;
+  try {
+    deleted = (await browserHost.deleteProfile?.(profile.id)) ?? false;
+  } catch (error) {
+    for (const browser of affectedBrowsers) {
+      browserState.updateBrowser(browser.browserId, { profileId: profile.id });
+    }
+    throw error;
+  }
+  if (!deleted) {
+    for (const browser of affectedBrowsers) {
+      browserState.updateBrowser(browser.browserId, { profileId: profile.id });
+    }
+    return browserAutomationFailure({
+      requestId: request.requestId,
+      code: "browser_unknown_error",
+      message: `Could not delete browser profile: ${profile.name}`,
+    });
+  }
+  return {
+    requestId: request.requestId,
+    ok: true,
+    result: { command: "delete_profile", profileId: profile.id },
+  };
 }
 
 function resizeBrowserTabForRequest(params: {
@@ -327,7 +456,26 @@ async function openBrowserTabForRequest(params: {
   }
 
   const url = command.args.url ?? "https://example.com";
-  const { browserId, url: normalizedUrl } = createWorkspaceBrowser({ initialUrl: url });
+  const profiles = await browserHost?.listProfiles?.();
+  const requestedProfile = command.args.profile ?? "Default";
+  const profile = profiles?.find(
+    (candidate) =>
+      candidate.id === requestedProfile ||
+      candidate.name.toLocaleLowerCase() === requestedProfile.toLocaleLowerCase(),
+  );
+  if (command.args.profile && !profile) {
+    return browserAutomationFailure({
+      requestId: request.requestId,
+      code: "browser_tab_not_found",
+      message: `Browser profile not found: ${command.args.profile}`,
+    });
+  }
+  const profileId = profile?.id ?? "default";
+  const profileName = profile?.name ?? "Default";
+  const { browserId, url: normalizedUrl } = createWorkspaceBrowser({
+    initialUrl: url,
+    profileId,
+  });
   const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
   if (!workspaceKey) {
     return browserAutomationFailure({
@@ -343,7 +491,7 @@ async function openBrowserTabForRequest(params: {
   });
 
   if (browserHost?.executeAutomationCommand) {
-    ensureResidentBrowserWebview({ browserId, workspaceId, url: normalizedUrl });
+    ensureResidentBrowserWebview({ browserId, workspaceId, url: normalizedUrl, profileId });
     const registered = await waitForBrowserRegistration({
       request,
       browserId,
@@ -367,7 +515,13 @@ async function openBrowserTabForRequest(params: {
   return {
     requestId: request.requestId,
     ok: true,
-    result: { command: "new_tab", browserId, workspaceId, url: normalizedUrl },
+    result: {
+      command: "new_tab",
+      browserId,
+      workspaceId,
+      url: normalizedUrl,
+      profile: profileName,
+    },
   };
 }
 

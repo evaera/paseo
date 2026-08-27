@@ -18,6 +18,10 @@ import {
 } from "@getpaseo/protocol/messages";
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
 import type {
+  BrowserAutomationCommand,
+  BrowserCommandExecuteResponse,
+} from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type {
   AgentStreamEventPayload,
   AgentSnapshotPayload,
   ProjectPlacementPayload,
@@ -4745,6 +4749,24 @@ export class DaemonClient {
 
   sendBrowserAutomationExecuteResponse(response: BrowserAutomationExecuteResponse): void {
     this.sendSessionMessageStrict(response);
+  }
+
+  async executeBrowserCommand(
+    command: BrowserAutomationCommand,
+    options?: { workspaceId?: string; cwd?: string; agentId?: string; requestId?: string },
+  ): Promise<BrowserCommandExecuteResponse["payload"]> {
+    const response = await this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: {
+        type: "browser.command.execute.request",
+        command,
+        ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
+        ...(options?.cwd ? { cwd: options.cwd } : {}),
+        ...(options?.agentId ? { agentId: options.agentId } : {}),
+      },
+      responseType: "browser.command.execute.response",
+    });
+    return response;
   }
 
   async readProjectConfig(repoRoot: string, requestId?: string): Promise<ReadProjectConfigPayload> {

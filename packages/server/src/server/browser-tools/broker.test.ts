@@ -80,6 +80,20 @@ describe("BrowserToolsBroker", () => {
     vi.useRealTimers();
   });
 
+  test.each([
+    { command: "list_profiles", args: {} },
+    { command: "new_tab", args: { url: "https://example.com", profile: "Work" } },
+  ] as const)("profile command $command rejects ambiguous browser hosts", async (command) => {
+    const broker = createBroker();
+    broker.registerClient(new FakeBrowserHostClient("host-1"));
+    broker.registerClient(new FakeBrowserHostClient("host-2"));
+
+    await expect(broker.execute({ command })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "browser_ambiguous_host" },
+    });
+  });
+
   test("no connected browser host returns a retryable browser_no_host error", async () => {
     const broker = createBroker();
 

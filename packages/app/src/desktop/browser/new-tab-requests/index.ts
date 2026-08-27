@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { getDesktopHost, type DesktopBrowserNewTabRequestEvent } from "@/desktop/host";
+import { getBrowserRecord } from "@/desktop/browser/store";
 import { collectAllTabs, type WorkspaceLayout } from "@/stores/workspace-layout-store";
 import { getIsElectron } from "@/constants/platform";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -68,7 +69,7 @@ export function resolveBrowserNewTabRequest(input: {
 export function useDesktopBrowserNewTabRequests(input: {
   enabled: boolean;
   workspaceLayout: WorkspaceLayout | null | undefined;
-  openUrl: (url: string) => void;
+  openUrl: (url: string, profileId?: string) => void;
 }): void {
   const handleNewTabRequest = useStableEvent((payload: unknown) => {
     const request = resolveBrowserNewTabRequest({
@@ -78,7 +79,7 @@ export function useDesktopBrowserNewTabRequests(input: {
     if (!request) {
       return;
     }
-    input.openUrl(request.url);
+    input.openUrl(request.url, getBrowserRecord(request.sourceBrowserId)?.profileId);
   });
 
   useEffect(() => {

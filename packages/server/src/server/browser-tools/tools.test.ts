@@ -538,6 +538,9 @@ describe("registerBrowserTools", () => {
     const harness = new BrowserToolHarness();
 
     expect(harness.toolNames()).toEqual([
+      "browser_list_profiles",
+      "browser_create_profile",
+      "browser_delete_profile",
       "browser_list_tabs",
       "browser_new_tab",
       "browser_snapshot",

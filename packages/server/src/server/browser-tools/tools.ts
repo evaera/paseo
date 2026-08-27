@@ -65,6 +65,61 @@ const BrowserWaitInputSchema = z
 
 export function registerBrowserTools(options: RegisterBrowserToolsOptions): void {
   options.registerTool(
+    "browser_list_profiles",
+    {
+      title: "List browser profiles",
+      description: "List persistent Paseo browser profiles. Default is always first.",
+      inputSchema: {},
+    },
+    async () => {
+      const context = resolveBrowserToolContext(options);
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        command: { command: "list_profiles", args: {} },
+      });
+      return browserToolResult({ payload, context });
+    },
+  );
+
+  options.registerTool(
+    "browser_create_profile",
+    {
+      title: "Create browser profile",
+      description: "Create an empty persistent Paseo browser profile with an isolated cookie jar.",
+      inputSchema: { name: z.string().trim().min(1).max(80) },
+    },
+    async ({ name }) => {
+      const context = resolveBrowserToolContext(options);
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        command: { command: "create_profile", args: { name } },
+      });
+      return browserToolResult({ payload, context });
+    },
+  );
+
+  options.registerTool(
+    "browser_delete_profile",
+    {
+      title: "Delete browser profile",
+      description:
+        "Delete a named Paseo browser profile and its browser data. Default cannot be deleted.",
+      inputSchema: { profile: z.string().trim().min(1).max(80) },
+    },
+    async ({ profile }) => {
+      const context = resolveBrowserToolContext(options);
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        command: { command: "delete_profile", args: { profile } },
+      });
+      return browserToolResult({ payload, context });
+    },
+  );
+
+  options.registerTool(
     "browser_list_tabs",
     {
       title: "List browser tabs",
@@ -99,9 +154,10 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         "Create a new Paseo browser tab in this agent's workspace on the most recently connected browser automation host, opened in the background without switching the user's view. Pass an http(s) URL or a scheme-less host URL, which is treated as http; the returned browserId is used by tab-scoped tools.",
       inputSchema: {
         url: BrowserHttpUrlInputSchema.optional(),
+        profile: z.string().trim().min(1).max(80).optional(),
       },
     },
-    async ({ url }) => {
+    async ({ url, profile }) => {
       const context = resolveBrowserToolContext(options);
       const missingWorkspace = requireWorkspaceContext(context);
       if (missingWorkspace) {
@@ -113,7 +169,10 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
         command: {
           command: "new_tab",
-          args: url ? { url } : {},
+          args: {
+            ...(url ? { url } : {}),
+            ...(profile ? { profile } : {}),
+          },
         },
       });
       return browserToolResult({ payload, context });

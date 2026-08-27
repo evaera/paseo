@@ -2439,11 +2439,11 @@ function WorkspaceScreenContent({
   );
 
   const handleOpenUrlInBrowserTab = useCallback(
-    (url: string) => {
+    (url: string, profileId?: string) => {
       if (!persistenceKey || !getIsElectron()) {
         return;
       }
-      const { browserId } = createWorkspaceBrowser({ initialUrl: url });
+      const { browserId } = createWorkspaceBrowser({ initialUrl: url, profileId });
       openWorkspaceTabFocused(
         persistenceKey,
         { kind: "browser", browserId },

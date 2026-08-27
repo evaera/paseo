@@ -10,7 +10,7 @@ import {
   createElement,
 } from "react";
 import { createPortal } from "react-dom";
-import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { Modal, Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
@@ -26,6 +26,9 @@ import {
   RotateCw,
   Smartphone,
   Tablet,
+  Trash2,
+  UserRound,
+  Plus,
   Wrench,
   X,
   type LucideIcon,
@@ -37,10 +40,12 @@ import { Button } from "@/components/ui/button";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/contexts/toast-context";
+import { confirmDialog } from "@/utils/confirm-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -55,6 +60,7 @@ import { getOverlayRoot } from "@/lib/overlay-root";
 import {
   getDesktopHost,
   isElectronRuntime,
+  type DesktopBrowserProfile,
   type DesktopBrowserShortcutEvent,
 } from "@/desktop/host";
 import {
@@ -476,6 +482,8 @@ const ThemedSmartphone = withUnistyles(Smartphone);
 const ThemedTablet = withUnistyles(Tablet);
 const ThemedMonitor = withUnistyles(Monitor);
 const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedUserRound = withUnistyles(UserRound);
+const ThemedPlus = withUnistyles(Plus);
 const deviceMutedIconMapping = (theme: { colors: { foregroundMuted: string } }) => ({
   color: theme.colors.foregroundMuted,
 });
@@ -562,6 +570,89 @@ function DeviceSizeMenu({
   );
 }
 
+function BrowserProfileMenuItem({
+  profile,
+  selected,
+  onSelect,
+}: {
+  profile: DesktopBrowserProfile;
+  selected: boolean;
+  onSelect: (profileId: string) => void;
+}) {
+  const handleSelect = useCallback(() => onSelect(profile.id), [onSelect, profile.id]);
+  return (
+    <DropdownMenuItem selected={selected} showSelectedCheck onSelect={handleSelect}>
+      {profile.name}
+    </DropdownMenuItem>
+  );
+}
+
+function BrowserProfileDeleteItem({
+  profile,
+  onDelete,
+}: {
+  profile: DesktopBrowserProfile;
+  onDelete: (profileId: string) => void;
+}) {
+  const handleDelete = useCallback(() => onDelete(profile.id), [onDelete, profile.id]);
+  const leading = useMemo(() => <Trash2 size={16} />, []);
+  return (
+    <DropdownMenuItem destructive leading={leading} onSelect={handleDelete}>
+      Delete {profile.name}
+    </DropdownMenuItem>
+  );
+}
+
+function BrowserProfileMenu({
+  profiles,
+  selectedProfileId,
+  onSelect,
+  onCreate,
+  onDelete,
+  triggerStyle,
+}: {
+  profiles: DesktopBrowserProfile[];
+  selectedProfileId: string;
+  onSelect: (profileId: string) => void;
+  onCreate: () => void;
+  onDelete: (profileId: string) => void;
+  triggerStyle: (state: { hovered?: boolean; pressed?: boolean }) => StyleProp<ViewStyle>;
+}) {
+  const createLeading = useMemo(
+    () => <ThemedPlus size={16} uniProps={deviceMutedIconMapping} />,
+    [],
+  );
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger accessibilityLabel="Browser profile" style={triggerStyle}>
+        <View style={styles.deviceTrigger}>
+          <ThemedUserRound size={16} uniProps={deviceMutedIconMapping} />
+          <ThemedChevronDown size={12} uniProps={deviceMutedIconMapping} />
+        </View>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {profiles.map((profile) => (
+          <BrowserProfileMenuItem
+            key={profile.id}
+            profile={profile}
+            selected={profile.id === selectedProfileId}
+            onSelect={onSelect}
+          />
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem leading={createLeading} onSelect={onCreate}>
+          Create new profile
+        </DropdownMenuItem>
+        {profiles
+          .filter((profile) => profile.id !== "default")
+          .map((profile) => (
+            <BrowserProfileDeleteItem key={profile.id} profile={profile} onDelete={onDelete} />
+          ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function deviceSizeIdForViewport(viewport: BrowserViewport): DeviceSizeId | null {
   if (viewport.mode === "responsive") {
     return "responsive";
@@ -632,6 +723,107 @@ export function BrowserPane({
   // scroll drift) and reused when the annotation card is submitted.
   const pendingScreenshotRef = useRef<AttachmentMetadata | undefined>(undefined);
   const [draftUrl, setDraftUrl] = useState(browser?.url ?? "https://example.com");
+  const [profiles, setProfiles] = useState<DesktopBrowserProfile[]>([
+    {
+      id: "default",
+      name: "Default",
+      createdAt: 0,
+      partition: "persist:paseo-browser",
+    },
+  ]);
+  const [createProfileOpen, setCreateProfileOpen] = useState(false);
+  const [profileName, setProfileName] = useState("");
+  const [profileCreateError, setProfileCreateError] = useState<string | null>(null);
+
+  const closeCreateProfile = useCallback(() => {
+    setCreateProfileOpen(false);
+    setProfileName("");
+    setProfileCreateError(null);
+  }, []);
+
+  const refreshProfiles = useCallback(async () => {
+    const next = await getDesktopHost()?.browser?.listProfiles?.();
+    if (!next) return;
+    const profileIds = new Set(next.map((profile) => profile.id));
+    const browserState = useBrowserStore.getState();
+    for (const record of Object.values(browserState.browsersById)) {
+      if (!profileIds.has(record.profileId)) removeResidentBrowserWebview(record.browserId);
+    }
+    browserState.normalizeBrowserProfiles(profileIds);
+    setProfiles(next);
+  }, []);
+
+  useEffect(() => {
+    void refreshProfiles();
+  }, [refreshProfiles]);
+
+  const handleSelectProfile = useCallback(
+    (profileId: string) => {
+      if (profileId === (browser?.profileId ?? "default")) return;
+      initialUrlRef.current = browser?.url ?? "https://example.com";
+      removeResidentBrowserWebview(browserId);
+      updateBrowser(browserId, { profileId });
+    },
+    [browser?.profileId, browser?.url, browserId, updateBrowser],
+  );
+
+  const handleDeleteProfile = useCallback(
+    async (profileId: string) => {
+      const selected = profiles.find((profile) => profile.id === profileId);
+      if (!selected || selected.id === "default") return;
+      const confirmed = await confirmDialog({
+        title: "Delete browser profile?",
+        message: `Delete ${selected.name} and all of its browser data?`,
+        confirmLabel: "Delete",
+        cancelLabel: "Cancel",
+        destructive: true,
+      });
+      if (!confirmed) return;
+      const browserState = useBrowserStore.getState();
+      const affected = Object.values(browserState.browsersById).filter(
+        (record) => record.profileId === selected.id,
+      );
+      for (const record of affected) {
+        removeResidentBrowserWebview(record.browserId);
+        browserState.updateBrowser(record.browserId, { profileId: "default" });
+      }
+      try {
+        const deleted = await getDesktopHost()?.browser?.deleteProfile?.(selected.id);
+        if (!deleted) throw new Error("Could not delete browser profile.");
+        await refreshProfiles();
+      } catch (error) {
+        for (const record of affected) {
+          browserState.updateBrowser(record.browserId, { profileId: selected.id });
+        }
+        toast.error(error instanceof Error ? error.message : "Could not delete browser profile.");
+      }
+    },
+    [profiles, refreshProfiles, toast],
+  );
+
+  const handleOpenCreateProfile = useCallback(() => setCreateProfileOpen(true), []);
+
+  const handleCreateProfile = useCallback(async () => {
+    const name = profileName.trim();
+    if (!name) return;
+    setProfileCreateError(null);
+    try {
+      const profile = await getDesktopHost()?.browser?.createProfile?.(name);
+      if (!profile) throw new Error("Browser profile creation is unavailable.");
+      closeCreateProfile();
+      await refreshProfiles();
+      handleSelectProfile(profile.id);
+    } catch (error) {
+      setProfileCreateError(error instanceof Error ? error.message : "Could not create profile.");
+    }
+  }, [closeCreateProfile, handleSelectProfile, profileName, refreshProfiles]);
+  const handleSubmitCreateProfile = useCallback(() => {
+    void handleCreateProfile();
+  }, [handleCreateProfile]);
+
+  const browserProfileReady =
+    (browser?.profileId ?? "default") === "default" ||
+    profiles.some((profile) => profile.id === browser?.profileId);
   const workspaceAttachmentScopeKey = useMemo(
     () => buildBrowserAttachmentScopeKey({ cwd, serverId, workspaceId }),
     [cwd, serverId, workspaceId],
@@ -723,6 +915,7 @@ export function BrowserPane({
     if (!isElectronRuntime()) {
       return;
     }
+    if (!browserProfileReady) return;
 
     const host = webviewHostRef.current;
     const clip = webviewClipRef.current;
@@ -743,6 +936,7 @@ export function BrowserPane({
       prepareBrowserWebview(webview, {
         browserId,
         workspaceId,
+        profileId: browser?.profileId ?? "default",
         initialUrl: initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
       });
     }
@@ -893,10 +1087,8 @@ export function BrowserPane({
       webview.removeEventListener("dom-ready", handleDomReady);
       webview.removeEventListener("focus", handleWebviewFocus);
       webview.removeEventListener("mousedown", handleWebviewFocus);
-      const browserStillExists = Boolean(
-        useBrowserStore.getState().browsersById[browserIdRef.current],
-      );
-      if (browserStillExists) {
+      const currentBrowser = useBrowserStore.getState().browsersById[browserIdRef.current];
+      if (currentBrowser && currentBrowser.profileId === (browser?.profileId ?? "default")) {
         releaseResidentBrowserWebview(browserIdRef.current, webview);
       } else {
         removeResidentBrowserWebview(browserIdRef.current);
@@ -907,7 +1099,7 @@ export function BrowserPane({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [browserId, onFocusPane]);
+  }, [browserId, browser?.profileId, browserProfileReady, onFocusPane]);
 
   useEffect(() => {
     const webview = webviewRef.current;
@@ -1480,6 +1672,14 @@ export function BrowserPane({
           />
         </View>
         <View style={styles.chromeRight}>
+          <BrowserProfileMenu
+            profiles={profiles}
+            selectedProfileId={browser?.profileId ?? "default"}
+            onSelect={handleSelectProfile}
+            onCreate={handleOpenCreateProfile}
+            onDelete={handleDeleteProfile}
+            triggerStyle={baseIconButtonStyle}
+          />
           <DeviceSizeMenu
             selectedId={selectedDeviceSizeId}
             onSelect={handleSelectDeviceSize}
@@ -1553,6 +1753,39 @@ export function BrowserPane({
           />
         ) : null}
       </View>
+      <Modal
+        transparent
+        visible={createProfileOpen}
+        animationType="fade"
+        onRequestClose={closeCreateProfile}
+      >
+        <View style={styles.profileModalBackdrop}>
+          <View style={styles.profileModalCard}>
+            <Text style={styles.profileModalTitle}>Create browser profile</Text>
+            <TextInput
+              accessibilityLabel="Profile name"
+              initialValue={profileName}
+              onChangeText={setProfileName}
+              onSubmitEditing={handleSubmitCreateProfile}
+              placeholder="Profile name"
+              style={styles.profileModalInput}
+            />
+            {profileCreateError ? (
+              <Text accessibilityRole="alert" style={styles.profileModalError}>
+                {profileCreateError}
+              </Text>
+            ) : null}
+            <View style={styles.profileModalActions}>
+              <Button variant="ghost" onPress={closeCreateProfile}>
+                Cancel
+              </Button>
+              <Button disabled={!profileName.trim()} onPress={handleSubmitCreateProfile}>
+                Create
+              </Button>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1776,6 +2009,46 @@ const styles = StyleSheet.create((theme) => ({
   toolbarTooltipText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.popoverForeground,
+  },
+  profileModalBackdrop: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: theme.spacing[4],
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+  },
+  profileModalCard: {
+    width: "100%",
+    maxWidth: 360,
+    gap: theme.spacing[3],
+    padding: theme.spacing[4],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
+  },
+  profileModalTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.lg,
+    fontWeight: "600",
+  },
+  profileModalInput: {
+    minHeight: 40,
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    color: theme.colors.foreground,
+    backgroundColor: theme.colors.surface1,
+  },
+  profileModalError: {
+    color: theme.colors.palette.red[500],
+    fontSize: theme.fontSize.sm,
+  },
+  profileModalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[2],
   },
   annotationOverlay: {
     position: "absolute",
