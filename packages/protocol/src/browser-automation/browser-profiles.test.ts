@@ -18,7 +18,7 @@ describe("browser profile automation", () => {
     ).toMatchObject({ command: "delete_profile", args: { profile: "Work" } });
   });
 
-  test("keeps new-tab profile optional", () => {
+  test("keeps new-tab profile input and result metadata optional", () => {
     expect(BrowserAutomationCommandSchema.parse({ command: "new_tab", args: {} })).toEqual({
       command: "new_tab",
       args: {},
@@ -26,6 +26,14 @@ describe("browser profile automation", () => {
     expect(
       BrowserAutomationCommandSchema.parse({ command: "new_tab", args: { profile: "Personal" } }),
     ).toMatchObject({ command: "new_tab", args: { profile: "Personal" } });
+    expect(
+      BrowserAutomationResultSchema.parse({
+        command: "new_tab",
+        browserId: "11111111-1111-4111-8111-111111111111",
+        workspaceId: "workspace-1",
+        url: "https://example.com",
+      }),
+    ).toMatchObject({ command: "new_tab" });
   });
 
   test("validates profile results", () => {

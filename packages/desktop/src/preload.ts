@@ -148,7 +148,7 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
         "paseo:browser:profiles:create",
         name,
       )) as BrowserProfileBridgeRecord;
-      rememberBrowserProfiles([profile]);
+      browserProfilePartitions.set(profile.id, profile.partition);
       return profile;
     },
     deleteProfile: async (profileId: string) => {

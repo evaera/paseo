@@ -426,13 +426,6 @@ function isBrowserShortcutKey(event: KeyboardEvent, key: "l" | "r"): boolean {
   return eventKey === key || event.code === `Key${key.toUpperCase()}`;
 }
 
-function removeBrowserProfile(
-  profiles: DesktopBrowserProfile[],
-  profileId: string,
-): DesktopBrowserProfile[] {
-  return profiles.filter((profile) => profile.id !== profileId);
-}
-
 function isDesktopBrowserShortcutEvent(payload: unknown): payload is DesktopBrowserShortcutEvent {
   if (!payload || typeof payload !== "object") {
     return false;
@@ -781,29 +774,9 @@ export function BrowserPane({
     void refreshProfiles();
     const events = getDesktopHost()?.events;
     const changed = events?.on?.("browser-profiles-changed", () => void refreshProfiles());
-    const deleting = events?.on?.("browser-profile-deleting", (payload) => {
-      if (
-        typeof payload !== "object" ||
-        payload === null ||
-        !("profileId" in payload) ||
-        typeof payload.profileId !== "string"
-      ) {
-        return;
-      }
-      const profileId = payload.profileId;
-      const browserState = useBrowserStore.getState();
-      for (const record of Object.values(browserState.browsersById)) {
-        if (record.profileId !== profileId) continue;
-        removeResidentBrowserWebview(record.browserId);
-        browserState.updateBrowser(record.browserId, { profileId: "default" });
-      }
-      setProfiles((current) => removeBrowserProfile(current, profileId));
-    });
     return () => {
       if (typeof changed === "function") changed();
       else void changed?.then((dispose) => dispose());
-      if (typeof deleting === "function") deleting();
-      else void deleting?.then((dispose) => dispose());
     };
   }, [refreshProfiles]);
 

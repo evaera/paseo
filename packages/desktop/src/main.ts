@@ -434,14 +434,17 @@ ipcMain.handle("paseo:browser:profiles:delete", async (event, profileId: unknown
     confirm: async (profile) => {
       const parent =
         BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow();
-      const result = await dialog.showMessageBox(parent!, {
-        type: "warning",
+      const options = {
+        type: "warning" as const,
         title: "Delete browser profile?",
         message: `Delete ${profile.name} and all of its browser data?`,
         buttons: ["Cancel", "Delete"],
         defaultId: 0,
         cancelId: 0,
-      });
+      };
+      const result = parent
+        ? await dialog.showMessageBox(parent, options)
+        : await dialog.showMessageBox(options);
       return result.response === 1;
     },
     beforeDelete: (profile) => {

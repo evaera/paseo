@@ -613,6 +613,29 @@ describe("registerBrowserTools", () => {
     ]);
   });
 
+  test("new tab summarizes an old host response without profile metadata", async () => {
+    const harness = new BrowserToolHarness();
+    harness.broker.setResponse({
+      requestId: "req-new-tab",
+      ok: true,
+      result: {
+        command: "new_tab",
+        browserId: BROWSER_ID,
+        workspaceId: "wks_workspace_a",
+        url: "https://example.com",
+      },
+    });
+
+    const response = await harness.execute("browser_new_tab", {});
+
+    expect(response.content).toEqual([
+      {
+        type: "text",
+        text: `Created browser tab browserId=${BROWSER_ID} url=https://example.com. Use this browserId for tab-scoped browser tools.`,
+      },
+    ]);
+  });
+
   test.each([
     {
       name: "navigate accepts localhost without a scheme as http",

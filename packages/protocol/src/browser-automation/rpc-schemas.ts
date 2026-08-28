@@ -323,8 +323,8 @@ export const BrowserAutomationNewTabResultSchema = z.object({
   browserId: BrowserAutomationBrowserIdSchema,
   workspaceId: z.string().min(1),
   url: z.string().min(1),
-  profileId: z.string().min(1),
-  profileName: z.string().min(1),
+  profileId: z.string().min(1).optional(),
+  profileName: z.string().min(1).optional(),
 });
 
 export const BrowserAutomationSnapshotStatsSchema = z

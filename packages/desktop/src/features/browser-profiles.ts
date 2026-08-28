@@ -82,21 +82,39 @@ function defaultProfile(): BrowserProfile {
   });
 }
 
-function normalizeDocument(value: unknown): StoredDocument {
-  const parsed = StoredDocumentSchema.safeParse(value);
-  if (!parsed.success) return { version: 1, profiles: [] };
+function normalizeDocument(value: unknown): { document: StoredDocument; repaired: boolean } {
+  const sourceProfiles =
+    typeof value === "object" &&
+    value !== null &&
+    "version" in value &&
+    value.version === 1 &&
+    "profiles" in value &&
+    Array.isArray(value.profiles)
+      ? value.profiles
+      : [];
+  const parsedDocument = StoredDocumentSchema.safeParse(value);
+  let repaired =
+    !parsedDocument.success || JSON.stringify(parsedDocument.data) !== JSON.stringify(value);
   const ids = new Set<string>();
   const names = new Set<string>();
-  return {
-    version: 1,
-    profiles: parsed.data.profiles.filter((profile) => {
-      const name = profile.name.toLocaleLowerCase();
-      if (ids.has(profile.id) || names.has(name) || name === "default") return false;
-      ids.add(profile.id);
-      names.add(name);
-      return true;
-    }),
-  };
+  const profiles: StoredDocument["profiles"] = [];
+  for (const candidate of sourceProfiles) {
+    const parsed = StoredProfileSchema.safeParse(candidate);
+    if (!parsed.success) {
+      repaired = true;
+      continue;
+    }
+    const name = parsed.data.name.toLocaleLowerCase();
+    if (ids.has(parsed.data.id) || names.has(name) || name === "default") {
+      repaired = true;
+      continue;
+    }
+    ids.add(parsed.data.id);
+    names.add(name);
+    profiles.push(parsed.data);
+  }
+  if (profiles.length !== sourceProfiles.length) repaired = true;
+  return { document: { version: 1, profiles }, repaired };
 }
 
 export function createBrowserProfilesStore(input: {
@@ -134,12 +152,16 @@ export function createBrowserProfilesStore(input: {
       await persist(cached);
       return cached;
     }
+    let normalized: { document: StoredDocument; repaired: boolean };
     try {
-      cached = normalizeDocument(JSON.parse(raw));
+      normalized = normalizeDocument(JSON.parse(raw));
     } catch {
+      normalized = { document: { version: 1, profiles: [] }, repaired: true };
+    }
+    cached = normalized.document;
+    if (normalized.repaired) {
       const backupPath = `${filePath}.corrupt.${Date.now()}`;
       await rename(filePath, backupPath);
-      cached = { version: 1, profiles: [] };
       await persist(cached);
     }
     return cached;

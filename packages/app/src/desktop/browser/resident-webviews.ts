@@ -3,7 +3,7 @@ import {
   type DesktopAttachedBrowserRegistration,
   type DesktopBrowserBridge,
 } from "@/desktop/host";
-import type { BrowserViewport } from "@/desktop/browser/store";
+import { useBrowserStore, type BrowserViewport } from "@/desktop/browser/store";
 import { WEB_SURFACE_PLANE } from "@/lib/overlay-root";
 
 const RESIDENT_BROWSER_HOST_ID = "paseo-browser-resident-webviews";
@@ -436,6 +436,28 @@ export function resizeResidentBrowserWebview(input: {
   }
 
   return dimensions;
+}
+
+export function removeResidentBrowserWebviewsForProfile(
+  payload: unknown,
+  browserState: {
+    browsersById: Record<string, { browserId: string; profileId: string }>;
+    updateBrowser(browserId: string, patch: { profileId?: string }): void;
+  } = useBrowserStore.getState(),
+): void {
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    !("profileId" in payload) ||
+    typeof payload.profileId !== "string"
+  ) {
+    return;
+  }
+  for (const record of Object.values(browserState.browsersById)) {
+    if (record.profileId !== payload.profileId) continue;
+    removeResidentBrowserWebview(record.browserId);
+    browserState.updateBrowser(record.browserId, { profileId: "default" });
+  }
 }
 
 export function removeResidentBrowserWebview(browserId: string): void {

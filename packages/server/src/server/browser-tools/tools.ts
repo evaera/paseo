@@ -948,8 +948,15 @@ function summarizeBrowserSuccess(
   }
 
   if (payload.result.command === "new_tab") {
+    const profileSummary =
+      payload.result.profileId && payload.result.profileName
+        ? ` profileId=${payload.result.profileId} profileName=${JSON.stringify(payload.result.profileName)}`
+        : "";
+    const profileHint = payload.result.profileId
+      ? " and profileId to open another tab in the same profile"
+      : "";
     return withDialogs(
-      `Created browser tab browserId=${payload.result.browserId} profileId=${payload.result.profileId} profileName=${JSON.stringify(payload.result.profileName)} url=${payload.result.url}. Use this browserId for tab-scoped browser tools and profileId to open another tab in the same profile.`,
+      `Created browser tab browserId=${payload.result.browserId}${profileSummary} url=${payload.result.url}. Use this browserId for tab-scoped browser tools${profileHint}.`,
     );
   }
 

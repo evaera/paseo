@@ -164,6 +164,14 @@ export class BrowserToolsBroker {
     if (unsupported) {
       return unsupported;
     }
+    const profileUnsupported = this.profileCapabilityUnsupportedFailure({
+      host: host.value,
+      command: request.data.command,
+      requestId,
+    });
+    if (profileUnsupported) {
+      return profileUnsupported;
+    }
 
     return this.sendRequest({
       host: host.value,
@@ -209,6 +217,19 @@ export class BrowserToolsBroker {
     }
     pending.resolve(parsed.data.payload);
     return true;
+  }
+
+  private profileCapabilityUnsupportedFailure(params: {
+    host: RegisteredBrowserHost;
+    command: BrowserAutomationCommand;
+    requestId: string;
+  }): BrowserToolsResponsePayload | null {
+    if (params.command.command !== "new_tab" || params.command.args.profile == null) return null;
+    return this.unsupportedCommandFailure({
+      host: params.host,
+      commandName: "list_profiles",
+      requestId: params.requestId,
+    });
   }
 
   private async executeListTabs(params: {

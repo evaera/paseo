@@ -10,6 +10,7 @@ import {
   rememberBrowserWebviewSize,
   releaseResidentBrowserWebview,
   removeResidentBrowserWebview,
+  removeResidentBrowserWebviewsForProfile,
   resizeResidentBrowserWebview,
   takeResidentBrowserWebview,
 } from "./resident-webviews";
@@ -100,6 +101,33 @@ describe("resident browser webviews", () => {
 
   afterEach(() => {
     clearResidentBrowserWebviewsForTests();
+  });
+
+  it("drains retained guests for a deleting profile without a mounted pane", () => {
+    const browserId = "11111111-1111-4111-8111-111111111111";
+    const webview = ensureResidentBrowserWebview({
+      browserId,
+      workspaceId: "workspace-1",
+      profileId: "profile-1",
+      url: "https://example.com",
+      profileHost,
+    });
+    const updates: Array<{ browserId: string; profileId: string }> = [];
+
+    removeResidentBrowserWebviewsForProfile(
+      { profileId: "profile-1" },
+      {
+        browsersById: {
+          [browserId]: { browserId, profileId: "profile-1" },
+        },
+        updateBrowser: (updatedBrowserId, patch) => {
+          updates.push({ browserId: updatedBrowserId, profileId: patch.profileId ?? "" });
+        },
+      },
+    );
+
+    expect(webview?.isConnected).toBe(false);
+    expect(updates).toEqual([{ browserId, profileId: "default" }]);
   });
 
   it("parks a browser webview in the permanent paintable 1x1 host", () => {

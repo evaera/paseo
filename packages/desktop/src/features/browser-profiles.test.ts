@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -163,13 +163,39 @@ describe("BrowserProfilesStore", () => {
 
   test("backs up corrupt metadata before creating a fresh document", async () => {
     const userDataPath = await tempDirectory();
-    await import("node:fs/promises").then(({ writeFile }) =>
-      writeFile(path.join(userDataPath, "browser-profiles.json"), "not json"),
-    );
+    await writeFile(path.join(userDataPath, "browser-profiles.json"), "not json");
     const store = createBrowserProfilesStore({ userDataPath });
     expect(await store.list()).toMatchObject([{ id: "default", name: "Default" }]);
-    const files = await import("node:fs/promises").then(({ readdir }) => readdir(userDataPath));
+    const files = await readdir(userDataPath);
     expect(files.some((file) => file.startsWith("browser-profiles.json.corrupt."))).toBe(true);
+  });
+
+  test("salvages valid profiles and backs up a partially corrupt document", async () => {
+    const userDataPath = await tempDirectory();
+    const id = "123e4567-e89b-42d3-a456-426614174000";
+    const filePath = path.join(userDataPath, "browser-profiles.json");
+    const original = JSON.stringify({
+      version: 1,
+      profiles: [
+        { id, name: "Work", createdAt: 42 },
+        { id: "invalid", name: "Broken", createdAt: 43 },
+      ],
+    });
+    await writeFile(filePath, original);
+
+    expect(await createBrowserProfilesStore({ userDataPath }).list()).toMatchObject([
+      { id: "default", name: "Default" },
+      { id, name: "Work", createdAt: 42 },
+    ]);
+    const backup = (await readdir(userDataPath)).find((file) =>
+      file.startsWith("browser-profiles.json.corrupt."),
+    );
+    expect(backup).toBeDefined();
+    await expect(readFile(path.join(userDataPath, backup!), "utf8")).resolves.toBe(original);
+    expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({
+      version: 1,
+      profiles: [{ id, name: "Work", createdAt: 42 }],
+    });
   });
 
   test("only resolves ids owned by the desktop store", async () => {
