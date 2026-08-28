@@ -78,6 +78,7 @@ export function mountBrowserAutomationDaemonClientHandler(
   });
 }
 
+// eslint-disable-next-line complexity -- Command routing keeps every bridge response on one audited boundary.
 async function handleBrowserAutomationRequest(params: {
   client: BrowserAutomationHandlerOptions["client"];
   getHost: () => DesktopHostBridge | null;
@@ -98,6 +99,24 @@ async function handleBrowserAutomationRequest(params: {
   } = params;
   const browserHost = getHost()?.browser;
   const executeAutomationCommand = browserHost?.executeAutomationCommand;
+
+  if (
+    request.command.command === "list_import_sources" ||
+    request.command.command === "import_browser_data"
+  ) {
+    try {
+      client.sendBrowserAutomationExecuteResponse({
+        type: "browser.automation.execute.response",
+        payload: await handleBrowserImportRequest({ request, browserHost }),
+      });
+    } catch (error) {
+      client.sendBrowserAutomationExecuteResponse({
+        type: "browser.automation.execute.response",
+        payload: normalizeThrownBridgeError(request.requestId, error),
+      });
+    }
+    return;
+  }
 
   if (request.command.command === "new_tab") {
     try {
@@ -172,6 +191,48 @@ async function handleBrowserAutomationRequest(params: {
       payload: normalizeThrownBridgeError(request.requestId, error),
     });
   }
+}
+
+async function handleBrowserImportRequest(params: {
+  request: BrowserAutomationExecuteRequest;
+  browserHost: DesktopHostBridge["browser"] | undefined;
+}): Promise<BrowserAutomationResponsePayload> {
+  const { request, browserHost } = params;
+  const command = request.command as Extract<
+    BrowserAutomationExecuteRequest["command"],
+    { command: "list_import_sources" | "import_browser_data" }
+  >;
+  if (command.command === "list_import_sources") {
+    if (!browserHost?.listImportSources) {
+      return browserAutomationFailure({
+        requestId: request.requestId,
+        code: "browser_unsupported",
+        message: "Browser data import requires an updated Paseo desktop host.",
+      });
+    }
+    const discovery = await browserHost.listImportSources();
+    return {
+      requestId: request.requestId,
+      ok: true,
+      result: { command: "list_import_sources", ...discovery },
+    };
+  }
+  if (!browserHost?.importBrowserData) {
+    return browserAutomationFailure({
+      requestId: request.requestId,
+      code: "browser_unsupported",
+      message: "Browser data import requires an updated Paseo desktop host.",
+    });
+  }
+  const result = await browserHost.importBrowserData({
+    ...command.args,
+    operationId: request.requestId,
+  });
+  return {
+    requestId: request.requestId,
+    ok: true,
+    result: { command: "import_browser_data", ...result },
+  };
 }
 
 function resizeBrowserTabForRequest(params: {

@@ -62,6 +62,14 @@ Interactive elements carry refs like `@e3`. The agent passes a ref to `browser_c
 
 For anything the tree can't capture, agents fall back to `browser_screenshot`, and `browser_logs` exposes console messages and network timing.
 
+## Importing site state
+
+On macOS, use the **Browser data** toolbar menu and choose **Import browser data...** to import allowlisted cookies, localStorage, and sessionStorage from locally installed Chrome, Chromium, Brave, Edge, and Arc source profiles. You choose the source, domains, and data categories. Paseo merges the data into the existing Default browser session. History, bookmarks, passwords, autofill, downloads, cache, tabs, and extensions are never read.
+
+Cookie databases and Chromium storage databases are copied before they are read. Unsupported records are skipped. macOS may show a Keychain prompt when Paseo needs a browser's Safe Storage secret to decrypt cookies. sessionStorage belongs to a tab, so those records are reported as queued, then applied once to the next new tab in the Default browser session whose initial HTTP(S) URL has the same origin. Queued records are lost if Paseo exits first.
+
+The `browser_list_import_sources` and `browser_import_browser_data` agent tools, plus `paseo browser import-sources` and `paseo browser import`, use the same path. Paseo desktop shows a native confirmation before reading browser data. Import responses contain imported, queued, and skipped counts plus warnings, never cookie or storage values. Cancelling stops remaining work but does not roll back cookies or storage records already applied.
+
 ## Architecture
 
 ```

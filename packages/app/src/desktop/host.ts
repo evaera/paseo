@@ -144,6 +144,31 @@ export interface DesktopAttachedBrowserRegistration {
   webContentsId: number;
 }
 
+export type DesktopBrowserImportCategory = "cookies" | "localStorage" | "sessionStorage";
+
+export interface DesktopBrowserImportSource {
+  id: string;
+  name: string;
+  profiles: Array<{ id: string; name: string }>;
+}
+
+export interface DesktopBrowserImportResult {
+  counts: Record<
+    DesktopBrowserImportCategory,
+    { imported: number; skipped: number; queued?: number }
+  >;
+  warnings: string[];
+}
+
+export interface DesktopBrowserImportRequest {
+  operationId?: string;
+  sourceBrowserId: string;
+  sourceProfileId: string;
+  domains: string[];
+  categories: DesktopBrowserImportCategory[];
+  confirmMerge: boolean;
+}
+
 export interface DesktopBrowserBridge {
   setShortcutPolicy?: (input: BrowserKeyboardPolicy) => Promise<void>;
   readonly profilePartition?: string;
@@ -156,6 +181,12 @@ export interface DesktopBrowserBridge {
   focus?: (browserId: string) => Promise<boolean>;
   openDevTools?: (browserId: string) => Promise<unknown>;
   clearProfile?: (legacyBrowserIds: string[]) => Promise<void>;
+  listImportSources?: () => Promise<{
+    sources: DesktopBrowserImportSource[];
+    warnings: string[];
+  }>;
+  importBrowserData?: (request: DesktopBrowserImportRequest) => Promise<DesktopBrowserImportResult>;
+  cancelBrowserDataImport?: (operationId: string) => Promise<boolean>;
   executeAutomationCommand?: (
     request: BrowserAutomationExecuteRequest,
   ) => Promise<BrowserAutomationExecuteResponse["payload"]>;

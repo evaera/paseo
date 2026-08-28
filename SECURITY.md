@@ -78,6 +78,16 @@ Native builds narrow this gap rather than closing it outright. The WebView refus
 
 If you don't trust a page, read it in `Source`, which executes nothing. Source is available as an editable view on supported web hosts and a read-only view everywhere else.
 
+## Browser data import
+
+The desktop app can import login and session state from locally installed macOS Chromium-family browsers into the existing Default browser session. An import requires a source browser and source profile, an explicit domain allowlist, and selected categories. Public suffixes are rejected; literal IP addresses and `localhost` are intentional development targets. Merging into existing data requires separate confirmation. Agent and CLI requests also require a native desktop confirmation that cannot be supplied in the request payload.
+
+Paseo snapshots source cookie and LevelDB storage databases before reading them and removes each snapshot after the import. Chromium cookie values are decrypted in memory with that browser's macOS Keychain Safe Storage secret, then written through Electron's cookie API so domain, path, expiry, Secure, HttpOnly, and SameSite attributes are retained. Known Chromium localStorage records are written through the DevTools DOM Storage API in a hidden sandboxed guest that never navigates. Unknown LevelDB records are skipped instead of guessed.
+
+sessionStorage belongs to a tab rather than a persistent browser session. Read sessionStorage is reported as queued, not imported, and held in memory by the Default session partition and origin. An empty URL, `about:blank`, or a different origin does not claim it. Paseo delays the next matching tab's initial HTTP(S) navigation until an origin-gated restore script runs, then clears the temporary navigation history. Failed or unapplied records return to the queue. Pending data is lost if Paseo exits before a matching tab opens.
+
+macOS may show a Keychain access prompt when encrypted cookies require the source browser's Safe Storage secret. Cancelling an import stops remaining work but does not roll back records already applied. Plaintext values and Keychain secrets are never included in responses or logs. The importer only considers cookies, localStorage, and sessionStorage for allowlisted domains. It never opens or imports browser history, bookmarks, passwords, autofill, downloads, cache, tabs, or extensions. Imported data is written only to the existing `persist:paseo-browser` Default session partition.
+
 ## Agent authentication
 
 Paseo wraps agent CLIs (Claude Code, Codex, OpenCode) but does not manage their authentication. Each agent provider handles its own credentials. Paseo never stores or transmits provider API keys. Agents run in your user context with your existing credentials.
