@@ -40,7 +40,6 @@ import { Button } from "@/components/ui/button";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/contexts/toast-context";
-import { confirmDialog } from "@/utils/confirm-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -427,6 +426,13 @@ function isBrowserShortcutKey(event: KeyboardEvent, key: "l" | "r"): boolean {
   return eventKey === key || event.code === `Key${key.toUpperCase()}`;
 }
 
+function removeBrowserProfile(
+  profiles: DesktopBrowserProfile[],
+  profileId: string,
+): DesktopBrowserProfile[] {
+  return profiles.filter((profile) => profile.id !== profileId);
+}
+
 function isDesktopBrowserShortcutEvent(payload: unknown): payload is DesktopBrowserShortcutEvent {
   if (!payload || typeof payload !== "object") {
     return false;
@@ -742,19 +748,63 @@ export function BrowserPane({
   }, []);
 
   const refreshProfiles = useCallback(async () => {
-    const next = await getDesktopHost()?.browser?.listProfiles?.();
-    if (!next) return;
-    const profileIds = new Set(next.map((profile) => profile.id));
-    const browserState = useBrowserStore.getState();
-    for (const record of Object.values(browserState.browsersById)) {
-      if (!profileIds.has(record.profileId)) removeResidentBrowserWebview(record.browserId);
+    try {
+      const next = await getDesktopHost()?.browser?.listProfiles?.();
+      if (!next) throw new Error("Browser profile management is unavailable.");
+      const profileIds = new Set(next.map((profile) => profile.id));
+      const browserState = useBrowserStore.getState();
+      for (const record of Object.values(browserState.browsersById)) {
+        if (!profileIds.has(record.profileId)) removeResidentBrowserWebview(record.browserId);
+      }
+      browserState.normalizeBrowserProfiles(profileIds);
+      setProfiles(next);
+    } catch (error) {
+      const browserState = useBrowserStore.getState();
+      for (const record of Object.values(browserState.browsersById)) {
+        if (record.profileId !== "default") removeResidentBrowserWebview(record.browserId);
+      }
+      browserState.normalizeBrowserProfiles(new Set(["default"]));
+      setProfiles([
+        {
+          id: "default",
+          name: "Default",
+          createdAt: 0,
+          partition: "persist:paseo-browser",
+        },
+      ]);
+      const message = error instanceof Error ? error.message : "Could not load browser profiles.";
+      toastRef.current.error(`${message} Using Default. Retry by reopening the profile menu.`);
     }
-    browserState.normalizeBrowserProfiles(profileIds);
-    setProfiles(next);
   }, []);
 
   useEffect(() => {
     void refreshProfiles();
+    const events = getDesktopHost()?.events;
+    const changed = events?.on?.("browser-profiles-changed", () => void refreshProfiles());
+    const deleting = events?.on?.("browser-profile-deleting", (payload) => {
+      if (
+        typeof payload !== "object" ||
+        payload === null ||
+        !("profileId" in payload) ||
+        typeof payload.profileId !== "string"
+      ) {
+        return;
+      }
+      const profileId = payload.profileId;
+      const browserState = useBrowserStore.getState();
+      for (const record of Object.values(browserState.browsersById)) {
+        if (record.profileId !== profileId) continue;
+        removeResidentBrowserWebview(record.browserId);
+        browserState.updateBrowser(record.browserId, { profileId: "default" });
+      }
+      setProfiles((current) => removeBrowserProfile(current, profileId));
+    });
+    return () => {
+      if (typeof changed === "function") changed();
+      else void changed?.then((dispose) => dispose());
+      if (typeof deleting === "function") deleting();
+      else void deleting?.then((dispose) => dispose());
+    };
   }, [refreshProfiles]);
 
   const handleSelectProfile = useCallback(
@@ -771,30 +821,10 @@ export function BrowserPane({
     async (profileId: string) => {
       const selected = profiles.find((profile) => profile.id === profileId);
       if (!selected || selected.id === "default") return;
-      const confirmed = await confirmDialog({
-        title: "Delete browser profile?",
-        message: `Delete ${selected.name} and all of its browser data?`,
-        confirmLabel: "Delete",
-        cancelLabel: "Cancel",
-        destructive: true,
-      });
-      if (!confirmed) return;
-      const browserState = useBrowserStore.getState();
-      const affected = Object.values(browserState.browsersById).filter(
-        (record) => record.profileId === selected.id,
-      );
-      for (const record of affected) {
-        removeResidentBrowserWebview(record.browserId);
-        browserState.updateBrowser(record.browserId, { profileId: "default" });
-      }
       try {
         const deleted = await getDesktopHost()?.browser?.deleteProfile?.(selected.id);
-        if (!deleted) throw new Error("Could not delete browser profile.");
-        await refreshProfiles();
+        if (deleted) await refreshProfiles();
       } catch (error) {
-        for (const record of affected) {
-          browserState.updateBrowser(record.browserId, { profileId: selected.id });
-        }
         toast.error(error instanceof Error ? error.message : "Could not delete browser profile.");
       }
     },

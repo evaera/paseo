@@ -100,6 +100,8 @@ function listTabsPayload(): Extract<BrowserToolsResponsePayload, { ok: true }> {
       tabs: [
         {
           browserId: BROWSER_ID,
+          profileId: "default",
+          profileName: "Default",
           url: "https://example.com",
           title: "Example",
           isActive: true,
@@ -119,6 +121,8 @@ function newTabPayload(): Extract<BrowserToolsResponsePayload, { ok: true }> {
       browserId: BROWSER_ID,
       workspaceId: "wks_workspace_a",
       url: "https://example.com",
+      profileId: "default",
+      profileName: "Default",
     },
   };
 }
@@ -582,7 +586,7 @@ describe("registerBrowserTools", () => {
     expect(response.content).toEqual([
       {
         type: "text",
-        text: `Found 1 Paseo browser tab. Use these browserId values for tab-scoped browser tools.\n- browserId=${BROWSER_ID} active title="Example" url=https://example.com`,
+        text: `Found 1 Paseo browser tab. Use these browserId values for tab-scoped browser tools.\n- browserId=${BROWSER_ID} active profileId=default profileName="Default" title="Example" url=https://example.com`,
       },
     ]);
   });
@@ -604,7 +608,7 @@ describe("registerBrowserTools", () => {
     expect(response.content).toEqual([
       {
         type: "text",
-        text: `Created browser tab browserId=${BROWSER_ID} url=https://example.com. Use this browserId for tab-scoped browser tools.`,
+        text: `Created browser tab browserId=${BROWSER_ID} profileId=default profileName="Default" url=https://example.com. Use this browserId for tab-scoped browser tools and profileId to open another tab in the same profile.`,
       },
     ]);
   });

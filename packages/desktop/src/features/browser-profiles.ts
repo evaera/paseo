@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 
@@ -15,11 +15,36 @@ export interface BrowserProfile {
   createdAt: number;
   partition: string;
 }
+export type BrowserProfileEvent = "browser-profiles-changed" | "browser-profile-deleting";
+
+export function broadcastBrowserProfileEvent(
+  windows: ReadonlyArray<{ webContents: { send(channel: string, payload: unknown): void } }>,
+  event: BrowserProfileEvent,
+  payload: unknown,
+): void {
+  for (const window of windows) window.webContents.send(`paseo:event:${event}`, payload);
+}
+
 export interface BrowserProfilesStore {
   list(): Promise<BrowserProfile[]>;
   create(name: unknown): Promise<BrowserProfile>;
   delete(id: unknown): Promise<boolean>;
   resolveId(id: unknown): Promise<string | null>;
+}
+
+export async function deleteBrowserProfileWithConfirmation(input: {
+  store: BrowserProfilesStore;
+  profileId: unknown;
+  confirm: (profile: BrowserProfile) => Promise<boolean>;
+  beforeDelete?: (profile: BrowserProfile) => void;
+}): Promise<boolean> {
+  if (typeof input.profileId !== "string" || input.profileId === DEFAULT_BROWSER_PROFILE_ID) {
+    return false;
+  }
+  const profile = (await input.store.list()).find((candidate) => candidate.id === input.profileId);
+  if (!profile || !(await input.confirm(profile))) return false;
+  input.beforeDelete?.(profile);
+  return input.store.delete(profile.id);
 }
 
 const StoredProfileSchema = z.object({
@@ -165,15 +190,4 @@ export function createBrowserProfilesStore(input: {
         return document.profiles.some((profile) => profile.id === value) ? value : null;
       }),
   };
-}
-
-export async function removeBrowserProfilePartition(
-  userDataPath: string,
-  profileId: string,
-): Promise<void> {
-  if (!PROFILE_ID_PATTERN.test(profileId)) return;
-  await rm(path.join(userDataPath, "Partitions", `paseo-browser-profile-${profileId}`), {
-    recursive: true,
-    force: true,
-  });
 }

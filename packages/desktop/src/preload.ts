@@ -22,6 +22,8 @@ const browserProfilePartitions = new Map([["default", PASEO_BROWSER_PROFILE_PART
 function rememberBrowserProfiles(
   profiles: BrowserProfileBridgeRecord[],
 ): BrowserProfileBridgeRecord[] {
+  browserProfilePartitions.clear();
+  browserProfilePartitions.set("default", PASEO_BROWSER_PROFILE_PARTITION);
   for (const profile of profiles) browserProfilePartitions.set(profile.id, profile.partition);
   return profiles;
 }

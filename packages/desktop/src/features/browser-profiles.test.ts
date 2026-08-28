@@ -4,8 +4,10 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   browserProfilePartition,
+  broadcastBrowserProfileEvent,
   createBrowserProfilesStore,
   DEFAULT_BROWSER_PROFILE_ID,
+  deleteBrowserProfileWithConfirmation,
 } from "./browser-profiles.js";
 
 const directories = new Set<string>();
@@ -29,6 +31,34 @@ describe("browser profile partitions", () => {
     expect(browserProfilePartition("123e4567-e89b-42d3-a456-426614174000")).toBe(
       "persist:paseo-browser-profile-123e4567-e89b-42d3-a456-426614174000",
     );
+  });
+});
+
+describe("browser profile events", () => {
+  test("broadcasts profile changes to every renderer window", () => {
+    const sent: Array<{ window: number; channel: string; payload: unknown }> = [];
+    const windows = [1, 2].map((window) => ({
+      webContents: {
+        send(channel: string, payload: unknown): void {
+          sent.push({ window, channel, payload });
+        },
+      },
+    }));
+
+    broadcastBrowserProfileEvent(windows, "browser-profile-deleting", { profileId: "profile-1" });
+
+    expect(sent).toEqual([
+      {
+        window: 1,
+        channel: "paseo:event:browser-profile-deleting",
+        payload: { profileId: "profile-1" },
+      },
+      {
+        window: 2,
+        channel: "paseo:event:browser-profile-deleting",
+        payload: { profileId: "profile-1" },
+      },
+    ]);
   });
 });
 
@@ -74,6 +104,49 @@ describe("BrowserProfilesStore", () => {
     await expect(store.delete(id)).resolves.toBe(true);
     expect(removed).toEqual([id]);
     expect(await store.list()).toHaveLength(1);
+  });
+
+  test("requires confirmation to delete a named profile and never confirms Default", async () => {
+    const userDataPath = await tempDirectory();
+    const id = "123e4567-e89b-42d3-a456-426614174000";
+    const store = createBrowserProfilesStore({ userDataPath, createId: () => id });
+    await store.create("Personal");
+    const confirmations: string[] = [];
+
+    await expect(
+      deleteBrowserProfileWithConfirmation({
+        store,
+        profileId: "default",
+        confirm: async (profile) => {
+          confirmations.push(profile.id);
+          return true;
+        },
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      deleteBrowserProfileWithConfirmation({
+        store,
+        profileId: id,
+        confirm: async (profile) => {
+          confirmations.push(profile.id);
+          return false;
+        },
+      }),
+    ).resolves.toBe(false);
+    expect((await store.list()).map((profile) => profile.id)).toEqual(["default", id]);
+
+    await expect(
+      deleteBrowserProfileWithConfirmation({
+        store,
+        profileId: id,
+        confirm: async (profile) => {
+          confirmations.push(profile.id);
+          return true;
+        },
+      }),
+    ).resolves.toBe(true);
+    expect(confirmations).toEqual([id, id]);
+    expect((await store.list()).map((profile) => profile.id)).toEqual(["default"]);
   });
 
   test("serializes concurrent profile creation without losing updates", async () => {

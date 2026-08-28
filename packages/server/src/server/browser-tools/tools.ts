@@ -934,7 +934,10 @@ function summarizeBrowserSuccess(
     }
     const tabLines = payload.result.tabs.map((tab) => {
       const active = tab.isActive ? " active" : "";
-      return `- browserId=${tab.browserId}${active} title=${JSON.stringify(tab.title || "Untitled")} url=${tab.url}`;
+      const profile = tab.profileId
+        ? ` profileId=${tab.profileId} profileName=${JSON.stringify(tab.profileName ?? "Default")}`
+        : "";
+      return `- browserId=${tab.browserId}${active}${profile} title=${JSON.stringify(tab.title || "Untitled")} url=${tab.url}`;
     });
     return withDialogs(
       [
@@ -946,7 +949,7 @@ function summarizeBrowserSuccess(
 
   if (payload.result.command === "new_tab") {
     return withDialogs(
-      `Created browser tab browserId=${payload.result.browserId} url=${payload.result.url}. Use this browserId for tab-scoped browser tools.`,
+      `Created browser tab browserId=${payload.result.browserId} profileId=${payload.result.profileId} profileName=${JSON.stringify(payload.result.profileName)} url=${payload.result.url}. Use this browserId for tab-scoped browser tools and profileId to open another tab in the same profile.`,
     );
   }
 

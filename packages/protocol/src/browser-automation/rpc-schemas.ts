@@ -282,7 +282,6 @@ export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
 export const BrowserAutomationTabInfoSchema = z.object({
   browserId: BrowserAutomationBrowserIdSchema,
   workspaceId: z.string().min(1).optional(),
-  profile: z.string().min(1).optional(),
   profileId: z.string().min(1).optional(),
   profileName: z.string().min(1).optional(),
   url: z.string(),
@@ -324,7 +323,8 @@ export const BrowserAutomationNewTabResultSchema = z.object({
   browserId: BrowserAutomationBrowserIdSchema,
   workspaceId: z.string().min(1),
   url: z.string().min(1),
-  profile: z.string().min(1).optional(),
+  profileId: z.string().min(1),
+  profileName: z.string().min(1),
 });
 
 export const BrowserAutomationSnapshotStatsSchema = z

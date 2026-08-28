@@ -15,6 +15,7 @@ import {
   autoUpdater as electronAutoUpdater,
   BrowserWindow,
   clipboard,
+  dialog,
   Menu,
   ipcMain,
   nativeImage,
@@ -79,8 +80,9 @@ import {
 } from "./features/browser-profile.js";
 import {
   browserProfilePartition,
+  broadcastBrowserProfileEvent,
   createBrowserProfilesStore,
-  removeBrowserProfilePartition,
+  deleteBrowserProfileWithConfirmation,
 } from "./features/browser-profiles.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
 import {
@@ -415,7 +417,6 @@ const browserProfiles = createBrowserProfilesStore({
       profileSession.clearCache(),
       profileSession.clearAuthCache(),
     ]);
-    await removeBrowserProfilePartition(app.getPath("userData"), profileId);
   },
 });
 
@@ -423,12 +424,35 @@ ipcMain.handle("paseo:browser:profiles:list", () => browserProfiles.list());
 ipcMain.handle("paseo:browser:profiles:create", async (_event, name: unknown) => {
   const profile = await browserProfiles.create(name);
   knownBrowserProfilePartitions.add(browserProfilePartition(profile.id));
+  broadcastBrowserProfileEvent(BrowserWindow.getAllWindows(), "browser-profiles-changed", {});
   return profile;
 });
-ipcMain.handle("paseo:browser:profiles:delete", async (_event, profileId: unknown) => {
-  const deleted = await browserProfiles.delete(profileId);
+ipcMain.handle("paseo:browser:profiles:delete", async (event, profileId: unknown) => {
+  const deleted = await deleteBrowserProfileWithConfirmation({
+    store: browserProfiles,
+    profileId,
+    confirm: async (profile) => {
+      const parent =
+        BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow();
+      const result = await dialog.showMessageBox(parent!, {
+        type: "warning",
+        title: "Delete browser profile?",
+        message: `Delete ${profile.name} and all of its browser data?`,
+        buttons: ["Cancel", "Delete"],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      return result.response === 1;
+    },
+    beforeDelete: (profile) => {
+      broadcastBrowserProfileEvent(BrowserWindow.getAllWindows(), "browser-profile-deleting", {
+        profileId: profile.id,
+      });
+    },
+  });
   if (deleted && typeof profileId === "string") {
     knownBrowserProfilePartitions.delete(browserProfilePartition(profileId));
+    broadcastBrowserProfileEvent(BrowserWindow.getAllWindows(), "browser-profiles-changed", {});
   }
   return deleted;
 });

@@ -193,7 +193,6 @@ async function handleBrowserAutomationRequest(params: {
             const profile = profilesById.get(profileId);
             return {
               ...tab,
-              profile: profile?.name ?? "Default",
               profileId,
               profileName: profile?.name ?? "Default",
             };
@@ -269,31 +268,12 @@ async function handleBrowserProfileRequest(params: {
         : `Browser profile not found: ${deleteCommand.args.profile}`,
     });
   }
-  const browserState = useBrowserStore.getState();
-  const affectedBrowsers = Object.values(browserState.browsersById).filter(
-    (browser) => browser.profileId === profile.id,
-  );
-  for (const browser of affectedBrowsers) {
-    removeResidentBrowserWebview(browser.browserId);
-    browserState.updateBrowser(browser.browserId, { profileId: "default" });
-  }
-  let deleted = false;
-  try {
-    deleted = (await browserHost.deleteProfile?.(profile.id)) ?? false;
-  } catch (error) {
-    for (const browser of affectedBrowsers) {
-      browserState.updateBrowser(browser.browserId, { profileId: profile.id });
-    }
-    throw error;
-  }
+  const deleted = (await browserHost.deleteProfile?.(profile.id)) ?? false;
   if (!deleted) {
-    for (const browser of affectedBrowsers) {
-      browserState.updateBrowser(browser.browserId, { profileId: profile.id });
-    }
     return browserAutomationFailure({
       requestId: request.requestId,
-      code: "browser_unknown_error",
-      message: `Could not delete browser profile: ${profile.name}`,
+      code: "browser_denied",
+      message: `Browser profile deletion was canceled: ${profile.name}`,
     });
   }
   return {
@@ -520,7 +500,8 @@ async function openBrowserTabForRequest(params: {
       browserId,
       workspaceId,
       url: normalizedUrl,
-      profile: profileName,
+      profileId,
+      profileName,
     },
   };
 }

@@ -304,6 +304,8 @@ describe("mountBrowserAutomationHandler", () => {
     await flushAsyncWork();
 
     const result = newTabResultFrom(browser.client.payloadAt(0));
+    expect(result).toMatchObject({ profileId: "default", profileName: "Default" });
+    expect(result).not.toHaveProperty("profile");
     const openedTabs = workspaceBrowserTabs(workspaceKey, result.browserId);
     const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
     expect(openedTabs).toEqual([
