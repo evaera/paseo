@@ -142,7 +142,7 @@ export const BrowserAutomationNewTabCommandSchema = z.object({
     .object({
       url: BrowserAutomationHttpUrlSchema.optional(),
       placement: WorkspaceLayoutPlacementSchema.optional(),
-      profile: z.string().trim().min(1).max(80).optional()
+      profile: z.string().trim().min(1).max(80).optional(),
     })
     .strict()
     .default({}),

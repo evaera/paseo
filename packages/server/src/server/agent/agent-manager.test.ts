@@ -2503,7 +2503,6 @@ test("createAgent passes authoritative workspace identity through the provider l
       workspaceId: "workspace-create",
       env: { PASEO_WORKSPACE_ID: "stale-workspace" },
     },
-
   );
 
   expect(client.lastConfig).toEqual({
@@ -2537,7 +2536,6 @@ test("createAgent passes authoritative workspace identity through the provider l
       PASEO_AGENT_ID: unscoped.id,
       PASEO_AGENT_CWD: workdir,
       PASEO_WORKSPACE_ID: "",
-
     },
   });
 });
@@ -3483,7 +3481,6 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
     },
     undefined,
     { workspaceId: "workspace-resume" },
-
   );
 
   expect(resumed.config.systemPrompt).toBe("new prompt");
@@ -3512,7 +3509,6 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
       PASEO_AGENT_ID: resumed.id,
       PASEO_AGENT_CWD: workdir,
       PASEO_WORKSPACE_ID: "workspace-resume",
-
     },
   });
 });
@@ -3718,7 +3714,6 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
     },
     undefined,
     { workspaceId: "workspace-reload" },
-
   );
 
   expect(client.lastCreateLaunchContext).toMatchObject({

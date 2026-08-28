@@ -555,20 +555,6 @@ function requireWebSocketServices(params: {
 /**
  * WebSocket server that only accepts sockets + parses/forwards messages to the session layer.
  */
-function hasInvalidBrowserCommandContext(input: {
-  request: BrowserCommandExecuteRequest;
-  workspace: { cwd: string } | null;
-  agent: { cwd: string; workspaceId?: string } | null | undefined;
-}): boolean {
-  const { request, workspace, agent } = input;
-  if (request.workspaceId !== undefined && !workspace) return true;
-  if (request.cwd !== undefined && workspace?.cwd !== request.cwd) return true;
-  if (request.agentId === undefined) return false;
-  if (!agent) return true;
-  if (request.workspaceId !== undefined && agent.workspaceId !== request.workspaceId) return true;
-  return request.cwd !== undefined && agent.cwd !== request.cwd;
-}
-
 export class VoiceAssistantWebSocketServer {
   private readonly logger: pino.Logger;
   private readonly wss: WebSocketServer;
@@ -1696,6 +1682,10 @@ export class VoiceAssistantWebSocketServer {
         providersSnapshot: true,
         // COMPAT(browserCommandRpc): added in v0.7.0, remove gate after 2027-08-27.
         browserCommandRpc: true,
+        // COMPAT(browserDataImport): added in v0.7.0, remove gate after 2027-08-27.
+        browserDataImport: true,
+        // COMPAT(serviceUrlOpenPolicyRpc): added in v0.7.0, remove gate after 2027-08-28.
+        serviceUrlOpenPolicyRpc: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: true,
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
@@ -1728,12 +1718,6 @@ export class VoiceAssistantWebSocketServer {
         pushTokenRevocation: true,
         // COMPAT(plugins): added in v0.3.0, remove gate after 2027-08-07.
         plugins: true,
-        // COMPAT(browserCommandRpc): added in v0.7.0, remove gate after 2027-08-27.
-        browserCommandRpc: true,
-        // COMPAT(browserDataImport): added in v0.7.0, remove gate after 2027-08-27.
-        browserDataImport: true,
-        // COMPAT(serviceUrlOpenPolicyRpc): added in v0.7.0, remove gate after 2027-08-28.
-        serviceUrlOpenPolicyRpc: true
         pluginManagement: true,
         pluginGitManagement: true,
         pluginLogs: true,

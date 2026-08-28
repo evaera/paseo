@@ -1,7 +1,12 @@
 /** @vitest-environment jsdom */
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
+vi.mock("react-native", () => ({
+  Platform: {
+    OS: "web",
+    select: (options: Record<string, unknown>) => options.web ?? options.default,
+  },
+}));
 vi.mock("@/panels/panel-manifest", () => ({
   panelResourceKey: (target: unknown) => JSON.stringify(target),
   panelSupportsHost: () => true,

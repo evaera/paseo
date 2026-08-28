@@ -18,10 +18,6 @@ import {
 } from "@getpaseo/protocol/messages";
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
 import type {
-  BrowserAutomationCommand,
-  BrowserCommandExecuteResponse,
-} from "@getpaseo/protocol/browser-automation/rpc-schemas";
-import type {
   AgentStreamEventPayload,
   AgentSnapshotPayload,
   ProjectPlacementPayload,
@@ -4805,6 +4801,9 @@ export class DaemonClient {
       timeoutMs?: number;
     },
   ): Promise<BrowserCommandExecuteResponse["payload"]> {
+    const timeout =
+      options?.timeoutMs ??
+      (command.command === "import_browser_data" ? 10 * 60 * 1_000 + 1_000 : undefined);
     return this.sendCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {
@@ -4815,11 +4814,7 @@ export class DaemonClient {
         ...(options?.agentId ? { agentId: options.agentId } : {}),
       },
       responseType: "browser.command.execute.response",
-      ...(options?.timeoutMs !== undefined
-        ? { timeout: options.timeoutMs }
-        : command.command === "import_browser_data"
-          ? { timeout: 10 * 60 * 1_000 + 1_000 }
-          : {})
+      ...(timeout !== undefined ? { timeout } : {}),
     });
   }
 

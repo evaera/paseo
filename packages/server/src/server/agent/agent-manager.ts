@@ -4846,7 +4846,7 @@ export class AgentManager {
         PASEO_AGENT_ID: agentId,
         PASEO_AGENT_CWD: cwd,
         PASEO_WORKSPACE_ID: workspaceId ?? "",
-      }
+      },
     };
     if (
       this.paseoToolsEnabled &&

@@ -113,6 +113,7 @@ export class BrowserToolsBroker {
     return this.clients.size;
   }
 
+  // eslint-disable-next-line complexity -- Browser command families have distinct routing and capability checks.
   public async execute(input: BrowserToolsExecuteInput): Promise<BrowserToolsResponsePayload> {
     const requestId = input.requestId ?? this.createRequestId();
 

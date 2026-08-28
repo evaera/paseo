@@ -626,6 +626,7 @@ async function openServiceUrlForRequest(
   };
 }
 
+// eslint-disable-next-line complexity -- Profile selection, pane placement, and registration share one tab-creation transaction.
 async function openBrowserTabForRequest(params: {
   request: BrowserAutomationExecuteRequest;
   serverId?: string;
@@ -697,7 +698,7 @@ async function openBrowserTabForRequest(params: {
     workspaceKey,
     target: { kind: "browser", browserId },
     ...params.tabOpen,
-    ...(tabPlacement ? { placement: tabPlacement } : {})
+    ...(tabPlacement ? { placement: tabPlacement } : {}),
   });
   if (!tabId) {
     useBrowserStore.getState().removeBrowser(browserId);

@@ -213,7 +213,11 @@ test("keeps pi-subagents live control reports in Pi context without projecting c
   const userSpoof = "Background task completed: **worker**\n\nThis is a real user prompt";
 
   await session.startTurn(userSpoof);
-  expect(runtime.prompts).toContainEqual({ message: userSpoof, imageCount: 0 });
+  expect(runtime.prompts).toContainEqual({
+    message: userSpoof,
+    imageCount: 0,
+    streamingBehavior: "followUp",
+  });
   for (const message of controlMessages) {
     runtime.emit({ type: "message_end", message });
   }
