@@ -104,6 +104,16 @@ describe("pending sessionStorage restores", () => {
     expect(pending.has("persist:target")).toBe(false);
   });
 
+  test("clears all queued restores for a profile", () => {
+    const pending = new PendingSessionStorageRestores();
+    pending.queue({ partition: "persist:target", records: RECORDS, confirmMerge: false });
+
+    pending.clear("persist:target");
+
+    expect(pending.has("persist:target")).toBe(false);
+    expect(pending.claim("persist:target", "https://example.com")).toEqual([]);
+  });
+
   test("requires merge confirmation when a target already has a pending restore", () => {
     const pending = new PendingSessionStorageRestores();
     pending.queue({ partition: "persist:target", records: RECORDS, confirmMerge: false });
@@ -172,6 +182,48 @@ describe("pending sessionStorage restores", () => {
       ],
     });
     expect(calls.map((call) => call.method)).toContain("Fetch.disable");
+    expect(attached).toBe(false);
+  });
+
+  test("fails closed when localStorage bootstrap attempts another network request", async () => {
+    let attached = false;
+    let messageListener:
+      | ((event: unknown, method: string, params: Record<string, unknown>) => void)
+      | null = null;
+    const contents = {
+      debugger: {
+        attach: () => {
+          attached = true;
+        },
+        detach: () => {
+          attached = false;
+        },
+        isAttached: () => attached,
+        sendCommand: async () => ({}),
+        on: (_event: "message", listener: typeof messageListener) => {
+          messageListener = listener;
+        },
+        removeListener: () => {
+          messageListener = null;
+        },
+      },
+      loadURL: async (url: string) => {
+        if (url !== "about:blank") {
+          messageListener?.({}, "Fetch.requestPaused", {
+            requestId: "unexpected",
+            request: { url: "https://tracker.invalid/pixel" },
+          });
+        }
+      },
+      navigationHistory: { clear: () => {} },
+      isDestroyed: () => false,
+      once: () => {},
+      removeListener: () => {},
+    };
+
+    await expect(
+      injectLocalStorageWithInertOrigins(contents, [RECORDS[0]], undefined, 50),
+    ).rejects.toThrow("Unexpected network request");
     expect(attached).toBe(false);
   });
 

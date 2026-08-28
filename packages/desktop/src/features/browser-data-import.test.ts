@@ -1,5 +1,5 @@
 import { createCipheriv, pbkdf2Sync } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -12,6 +12,7 @@ import {
   listBrowserImportSources,
   normalizeBrowserImportRequest,
   normalizeImportDomains,
+  sweepStaleBrowserImportDirectories,
   type BrowserImportCookie,
   type BrowserOriginStorageRecord,
 } from "./browser-data-import.js";
@@ -126,6 +127,26 @@ async function createChromeFixture(home: string, secret: string): Promise<string
 }
 
 describe("browser data import", () => {
+  test("sweeps only stale browser import temporary directories", async () => {
+    const temporaryRoot = await temporaryDirectory();
+    const stale = path.join(temporaryRoot, "paseo-browser-import-stale");
+    const current = path.join(temporaryRoot, "paseo-browser-import-current");
+    const unrelated = path.join(temporaryRoot, "unrelated-stale");
+    await Promise.all([mkdir(stale), mkdir(current), mkdir(unrelated)]);
+    await Promise.all([utimes(stale, 1, 1), utimes(unrelated, 1, 1)]);
+
+    await sweepStaleBrowserImportDirectories({
+      temporaryRoot,
+      now: 2 * 24 * 60 * 60 * 1_000,
+      maximumAgeMs: 24 * 60 * 60 * 1_000,
+    });
+
+    expect(await readdir(temporaryRoot)).toEqual([
+      "paseo-browser-import-current",
+      "unrelated-stale",
+    ]);
+  });
+
   test("discovers installed Chromium-family profiles without exposing paths", async () => {
     const home = await temporaryDirectory();
     await mkdir(path.join(home, "Library/Application Support/Google/Chrome/Default"), {
@@ -172,6 +193,17 @@ describe("browser data import", () => {
         confirmMerge: false,
       }),
     ).toThrow("Invalid source browser");
+    for (const spoofed of ["chrome\u2028spoof", "chrome\u202espoof", "chrome\u2066spoof"]) {
+      expect(() =>
+        normalizeBrowserImportRequest({
+          sourceBrowserId: spoofed,
+          sourceProfileId: "Default",
+          domains: ["example.com"],
+          categories: ["cookies"],
+          confirmMerge: false,
+        }),
+      ).toThrow("Invalid source browser");
+    }
   });
 
   test("normalizes and applies the domain allowlist", () => {

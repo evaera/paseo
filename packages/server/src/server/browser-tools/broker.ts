@@ -44,6 +44,7 @@ export interface BrowserToolsBrokerOptions {
 }
 
 const DEFAULT_BROWSER_TOOLS_TIMEOUT_MS = 15_000;
+const BROWSER_IMPORT_TIMEOUT_MS = 10 * 60 * 1_000;
 
 export class BrowserToolsBroker {
   private readonly defaultTimeoutMs: number;
@@ -154,7 +155,11 @@ export class BrowserToolsBroker {
     return this.sendRequest({
       host: host.value,
       request: request.data,
-      timeoutMs: input.timeoutMs ?? this.defaultTimeoutMs,
+      timeoutMs:
+        input.timeoutMs ??
+        (request.data.command.command === "import_browser_data"
+          ? BROWSER_IMPORT_TIMEOUT_MS
+          : this.defaultTimeoutMs),
     });
   }
 
@@ -444,7 +449,7 @@ export class BrowserToolsBroker {
             requestId: request.requestId,
             code: "browser_timeout",
             message: `Browser automation timed out after ${timeoutMs}ms.`,
-            retryable: true,
+            retryable: request.command.command !== "import_browser_data",
           }),
         );
       }, timeoutMs);

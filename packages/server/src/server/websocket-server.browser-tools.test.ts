@@ -39,6 +39,10 @@ interface ConnectBrowserHostClientOptions {
 
 interface BrowserHostClientHandle {
   clientId: string;
+  executeBrowserCommand(
+    command: BrowserAutomationExecuteRequest["command"],
+    requestId?: string,
+  ): Promise<BrowserAutomationExecuteResponse["payload"]>;
   nextBrowserRequest(): Promise<BrowserAutomationExecuteRequest>;
   respondToBrowserRequest(response: BrowserAutomationExecuteResponse): void;
   disconnect(): Promise<void>;
@@ -104,6 +108,47 @@ describe("WebSocketServer browser tools wiring", () => {
       requestId: request.requestId,
       ok: true,
       result: { command: "list_tabs", tabs: [] },
+    });
+  });
+
+  it("allows only import commands on the trusted client command channel and echoes requestId", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const browserHost = await harness.connectBrowserHostClient({
+      capabilities: browserHostCapabilities(["list_import_sources", "import_browser_data"]),
+    });
+
+    const allowed = browserHost.executeBrowserCommand(
+      { command: "list_import_sources", args: {} },
+      "client-import-request",
+    );
+    const request = await browserHost.nextBrowserRequest();
+    browserHost.respondToBrowserRequest({
+      type: "browser.automation.execute.response",
+      payload: {
+        requestId: request.requestId,
+        ok: true,
+        result: { command: "list_import_sources", sources: [], warnings: [] },
+      },
+    });
+    await expect(allowed).resolves.toMatchObject({
+      requestId: "client-import-request",
+      ok: true,
+      result: { command: "list_import_sources" },
+    });
+
+    await expect(
+      browserHost.executeBrowserCommand(
+        { command: "list_tabs", args: {} },
+        "client-denied-request",
+      ),
+    ).resolves.toEqual({
+      requestId: "client-denied-request",
+      ok: false,
+      error: {
+        code: "browser_denied",
+        message: "This browser command is not available through the client command channel.",
+        retryable: false,
+      },
     });
   });
 
@@ -228,6 +273,8 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
 
       return {
         clientId: clientId ?? "",
+        executeBrowserCommand: (command, requestId) =>
+          client.executeBrowserCommand(command, requestId ? { requestId } : undefined),
         nextBrowserRequest: () => requests.next(),
         respondToBrowserRequest: (response) =>
           client.sendBrowserAutomationExecuteResponse(response),
@@ -284,6 +331,7 @@ function createVoiceAssistantWebSocketServer(params: {
   const daemonConfigStore = {
     onApply: () => () => {},
     onChange: () => () => {},
+    get: () => ({ browserTools: { enabled: true } }),
   };
 
   return new VoiceAssistantWebSocketServer(

@@ -59,6 +59,10 @@ export class PendingSessionStorageRestores {
     return records;
   }
 
+  clear(partition: string): void {
+    this.recordsByPartitionAndOrigin.delete(partition);
+  }
+
   restore(partition: string, records: BrowserOriginStorageRecord[]): void {
     if (records.length === 0) return;
     const byOrigin = this.recordsByPartitionAndOrigin.get(partition) ?? new Map();
@@ -218,14 +222,21 @@ export async function injectLocalStorageWithInertOrigins(
     if (typeof params.requestId !== "string" || typeof request?.url !== "string") {
       return undefined;
     }
-    const command = bootstrapUrls.has(request.url)
+    const isBootstrapRequest = bootstrapUrls.has(request.url);
+    const command = isBootstrapRequest
       ? contents.debugger.sendCommand("Fetch.fulfillRequest", {
           requestId: params.requestId,
           responseCode: 200,
           responseHeaders: INERT_DOCUMENT_HEADERS,
           body: Buffer.from(INERT_DOCUMENT).toString("base64"),
         })
-      : contents.debugger.sendCommand("Fetch.continueRequest", { requestId: params.requestId });
+      : contents.debugger.sendCommand("Fetch.failRequest", {
+          requestId: params.requestId,
+          errorReason: "BlockedByClient",
+        });
+    if (!isBootstrapRequest) {
+      rejectFailure?.(new Error("Unexpected network request during localStorage import"));
+    }
     void command.catch((error) =>
       rejectFailure?.(error instanceof Error ? error : new Error("Fetch interception failed")),
     );
@@ -241,7 +252,7 @@ export async function injectLocalStorageWithInertOrigins(
     contents.debugger.on("message", onMessage);
     await Promise.race([
       contents.debugger.sendCommand("Fetch.enable", {
-        patterns: [...bootstrapUrls.keys()].map((urlPattern) => ({ urlPattern })),
+        patterns: [{ urlPattern: "*" }],
       }),
       failure,
     ]);

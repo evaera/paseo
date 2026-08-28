@@ -83,6 +83,7 @@ import {
 import {
   importBrowserData,
   listBrowserImportSources,
+  sweepStaleBrowserImportDirectories,
   type BrowserImportRequest,
   type BrowserOriginStorageRecord,
   type BrowserStorageImportOutcome,
@@ -393,6 +394,7 @@ ipcMain.handle("paseo:agent-navigation:ready", (event) => {
 });
 
 ipcMain.handle("paseo:browser:import-sources", () => listBrowserImportSources());
+void sweepStaleBrowserImportDirectories();
 const pendingSessionStorage = new PendingSessionStorageRestores();
 let browserLocalStorageImport: Promise<BrowserStorageImportOutcome> | null = null;
 
@@ -432,19 +434,27 @@ async function injectBrowserLocalStorage(
   }
 }
 
-function consentField(value: string, maximum = 1_000): string {
-  return value.length <= maximum ? value : `${value.slice(0, maximum - 1)}…`;
-}
-
 async function confirmBrowserImport(
   event: Electron.IpcMainInvokeEvent,
   request: BrowserImportRequest,
 ): Promise<void> {
+  if (process.platform !== "darwin") {
+    throw new Error("Browser data import is currently supported on macOS only");
+  }
+  const discovery = await listBrowserImportSources();
+  const source = discovery.sources.find((candidate) => candidate.id === request.sourceBrowserId);
+  const profile = source?.profiles.find((candidate) => candidate.id === request.sourceProfileId);
+  if (!source || !profile) throw new Error("Browser source profile is not available");
+
+  const domains = request.domains.join(", ");
+  if (domains.length > 4_000) {
+    throw new Error("The complete browser import domain allowlist is too large to display safely");
+  }
   const options: Electron.MessageBoxOptions = {
     type: "warning",
     title: "Allow browser data import?",
     message: "Paseo requested browser data import",
-    detail: `Source: ${consentField(request.sourceBrowserId, 80)} / ${consentField(request.sourceProfileId, 160)}\nDestination: Default browser session\nDomains: ${consentField(request.domains.join(", "))}\nData: ${consentField(request.categories.join(", "), 80)}\nMerge into existing data: ${request.confirmMerge ? "Yes" : "No"}`,
+    detail: `Source: ${source.name} / ${profile.name}\nDestination: Default browser session\nDomains: ${domains}\nData: ${request.categories.join(", ")}\nMerge into existing data: ${request.confirmMerge ? "Yes" : "No"}`,
     buttons: ["Allow import", "Cancel"],
     defaultId: 1,
     cancelId: 1,
@@ -634,6 +644,7 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
       log.warn("[browser-profile] failed to reload guest", { webContentsId, error });
     },
   });
+  pendingSessionStorage.clear(PASEO_BROWSER_PROFILE_PARTITION);
 });
 
 const browserCapture = createBrowserCaptureService<Electron.NativeImage>({
@@ -932,6 +943,11 @@ async function createWindow(
           );
           // Never pass storage values or a CDP error that may echo parameters to logging.
           log.warn("[browser-import] sessionStorage restore failed");
+          if (!contents.isDestroyed()) {
+            void contents.loadURL(pendingAttach.initialUrl).catch(() => {
+              log.warn("[browser-import] failed to navigate after sessionStorage requeue");
+            });
+          }
         });
     }
     contents.once("destroyed", () => {

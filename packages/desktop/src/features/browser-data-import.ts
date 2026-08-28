@@ -30,11 +30,22 @@ export interface BrowserImportRequest {
   confirmMerge: boolean;
 }
 
+function hasUnsafeDisplayCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return (
+      codePoint <= 0x1f ||
+      codePoint === 0x7f ||
+      (codePoint >= 0x2028 && codePoint <= 0x202e) ||
+      (codePoint >= 0x2066 && codePoint <= 0x2069)
+    );
+  });
+}
+
 function boundedDisplayString(value: unknown, field: string, maximum: number): string {
   if (typeof value !== "string") throw new Error(`Invalid ${field}`);
   const normalized = value.trim();
-  // eslint-disable-next-line no-control-regex -- Imported browser identifiers must reject ASCII control characters.
-  if (!normalized || normalized.length > maximum || /[\u0000-\u001f\u007f]/.test(normalized)) {
+  if (!normalized || normalized.length > maximum || hasUnsafeDisplayCharacter(normalized)) {
     throw new Error(`Invalid ${field}`);
   }
   return normalized;
@@ -272,6 +283,15 @@ export function domainIsAllowed(hostname: string, domains: readonly string[]): b
   return domains.some((domain) => normalized === domain || normalized.endsWith(`.${domain}`));
 }
 
+function safeProfileDisplayName(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 160 || hasUnsafeDisplayCharacter(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
 async function readProfileNames(root: string): Promise<Map<string, string>> {
   const names = new Map<string, string>();
   try {
@@ -280,14 +300,34 @@ async function readProfileNames(root: string): Promise<Map<string, string>> {
     };
     for (const [directory, details] of Object.entries(localState.profile?.info_cache ?? {})) {
       const safeDirectory = normalizeProfileDirectory(directory);
-      if (safeDirectory && typeof details.name === "string" && details.name.trim()) {
-        names.set(safeDirectory, details.name.trim());
-      }
+      const safeName = safeProfileDisplayName(details.name);
+      if (safeDirectory && safeName) names.set(safeDirectory, safeName);
     }
   } catch {
     // A missing or malformed Local State file does not make profile discovery unsafe.
   }
   return names;
+}
+
+export async function sweepStaleBrowserImportDirectories(input?: {
+  temporaryRoot?: string;
+  now?: number;
+  maximumAgeMs?: number;
+}): Promise<void> {
+  const temporaryRoot = input?.temporaryRoot ?? os.tmpdir();
+  const cutoff = (input?.now ?? Date.now()) - (input?.maximumAgeMs ?? 24 * 60 * 60 * 1_000);
+  const entries = await readdir(temporaryRoot, { withFileTypes: true }).catch(() => []);
+  await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith("paseo-browser-import-"))
+      .map(async (entry) => {
+        const directory = path.join(temporaryRoot, entry.name);
+        const details = await stat(directory).catch(() => null);
+        if (details && details.mtimeMs < cutoff) {
+          await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+        }
+      }),
+  );
 }
 
 export async function listBrowserImportSources(input?: {

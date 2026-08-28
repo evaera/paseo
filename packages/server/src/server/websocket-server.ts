@@ -2281,6 +2281,9 @@ export class VoiceAssistantWebSocketServer {
     ws: WebSocketLike,
     request: BrowserCommandExecuteRequest,
   ): Promise<void> {
+    const importCommand =
+      request.command.command === "list_import_sources" ||
+      request.command.command === "import_browser_data";
     const browserToolsEnabled = this.daemonConfigStore.get().browserTools.enabled;
     const workspace = request.workspaceId
       ? await this.workspaceRegistry.get(request.workspaceId)
@@ -2293,8 +2296,17 @@ export class VoiceAssistantWebSocketServer {
         (!agent ||
           (request.workspaceId !== undefined && agent.workspaceId !== request.workspaceId) ||
           (request.cwd !== undefined && agent.cwd !== request.cwd)));
+    let deniedCode: "browser_denied" | "browser_disabled" = "browser_disabled";
+    let deniedMessage = "Browser tools are disabled on this daemon.";
+    if (!importCommand) {
+      deniedCode = "browser_denied";
+      deniedMessage = "This browser command is not available through the client command channel.";
+    } else if (invalidContext) {
+      deniedCode = "browser_denied";
+      deniedMessage = "Browser command context is not owned by this client session.";
+    }
     const payload =
-      browserToolsEnabled && this.browserToolsBroker && !invalidContext
+      importCommand && browserToolsEnabled && this.browserToolsBroker && !invalidContext
         ? await this.browserToolsBroker.execute({
             command: request.command,
             ...(request.agentId ? { agentId: request.agentId } : {}),
@@ -2305,10 +2317,8 @@ export class VoiceAssistantWebSocketServer {
             requestId: request.requestId,
             ok: false as const,
             error: {
-              code: invalidContext ? ("browser_denied" as const) : ("browser_disabled" as const),
-              message: invalidContext
-                ? "Browser command context is not owned by this client session."
-                : "Browser tools are disabled on this daemon.",
+              code: deniedCode,
+              message: deniedMessage,
               retryable: false,
             },
           };
@@ -2353,11 +2363,27 @@ export class VoiceAssistantWebSocketServer {
       this.browserToolsBroker?.receiveResponse(message.message as BrowserAutomationExecuteResponse);
       return;
     }
-    if (
-      activeConnection.kind === "trusted" &&
-      message.message.type === "browser.command.execute.request"
-    ) {
-      await this.handleBrowserCommandRequest(ws, message.message as BrowserCommandExecuteRequest);
+    if (message.message.type === "browser.command.execute.request") {
+      const request = message.message as BrowserCommandExecuteRequest;
+      if (activeConnection.kind === "trusted") {
+        await this.handleBrowserCommandRequest(ws, request);
+      } else {
+        this.sendToClient(ws, {
+          type: "session",
+          message: {
+            type: "browser.command.execute.response",
+            payload: {
+              requestId: request.requestId,
+              ok: false,
+              error: {
+                code: "browser_denied",
+                message: "Browser commands require a trusted client connection.",
+                retryable: false,
+              },
+            },
+          },
+        });
+      }
       return;
     }
 

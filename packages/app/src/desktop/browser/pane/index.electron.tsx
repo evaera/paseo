@@ -674,6 +674,7 @@ function BrowserImportModal({ visible, onClose }: { visible: boolean; onClose: (
   const [confirmMerge, setConfirmMerge] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [discoveryWarning, setDiscoveryWarning] = useState<string | null>(null);
   const [result, setResult] = useState<DesktopBrowserImportResult | null>(null);
   const operationIdRef = useRef<string | null>(null);
   const modalRevisionRef = useRef(0);
@@ -695,6 +696,7 @@ function BrowserImportModal({ visible, onClose }: { visible: boolean; onClose: (
     setConfirmMerge(false);
     setPending(false);
     setError(null);
+    setDiscoveryWarning(null);
     setResult(null);
     const discovery = getDesktopHost()?.browser?.listImportSources?.();
     if (!discovery) {
@@ -710,7 +712,7 @@ function BrowserImportModal({ visible, onClose }: { visible: boolean; onClose: (
           setSourceBrowserId(firstSource.id);
           setSourceProfileId(firstSource.profiles[0]?.id ?? "");
         }
-        if (response.warnings.length > 0) setError(response.warnings.join(" "));
+        if (response.warnings.length > 0) setDiscoveryWarning(response.warnings.join(" "));
         return undefined;
       })
       .catch((cause) => {
@@ -851,6 +853,9 @@ function BrowserImportModal({ visible, onClose }: { visible: boolean; onClose: (
                   </Text>
                 </Pressable>
               </View>
+              {discoveryWarning ? (
+                <Text style={styles.importWarning}>{discoveryWarning}</Text>
+              ) : null}
               {error ? (
                 <Text accessibilityRole="alert" style={styles.importModalError}>
                   {error}

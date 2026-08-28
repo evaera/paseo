@@ -112,7 +112,7 @@ async function handleBrowserAutomationRequest(params: {
     } catch (error) {
       client.sendBrowserAutomationExecuteResponse({
         type: "browser.automation.execute.response",
-        payload: normalizeThrownBridgeError(request.requestId, error),
+        payload: normalizeBrowserImportError(request.requestId, error),
       });
     }
     return;
@@ -471,6 +471,34 @@ function normalizeBridgePayload(
   payload: BrowserAutomationResponsePayload,
 ): BrowserAutomationResponsePayload {
   return { ...payload, requestId } as BrowserAutomationResponsePayload;
+}
+
+function normalizeBrowserImportError(
+  requestId: string,
+  error: unknown,
+): BrowserAutomationFailurePayload {
+  const typed = readTypedBrowserAutomationError(error);
+  if (typed) return browserAutomationFailure({ requestId, ...typed });
+
+  const message = error instanceof Error ? error.message : "";
+  const safeMessage = [
+    "Browser data import was denied",
+    "Browser data import confirmation timed out",
+    "Browser data import is currently supported",
+    "Browser source profile is not available",
+    "The complete browser import domain allowlist is too large",
+    "The Default browser session already contains data",
+    "Invalid browser import",
+    "Invalid import",
+    "Import categories",
+  ].some((prefix) => message.startsWith(prefix))
+    ? message
+    : "Browser data import failed on the desktop host.";
+  return browserAutomationFailure({
+    requestId,
+    code: "browser_unknown_error",
+    message: safeMessage,
+  });
 }
 
 function normalizeThrownBridgeError(
