@@ -1525,6 +1525,13 @@ export function BrowserPane({
     ],
     [],
   );
+  const profileTriggerStyle = useCallback(
+    (state: { hovered?: boolean; pressed?: boolean }) => [
+      baseIconButtonStyle(state),
+      styles.profileTrigger,
+    ],
+    [baseIconButtonStyle],
+  );
   const backIconButtonStyle = useCallback(
     ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
       styles.iconButton,
@@ -1678,7 +1685,7 @@ export function BrowserPane({
             onSelect={handleSelectProfile}
             onCreate={handleOpenCreateProfile}
             onDelete={handleDeleteProfile}
-            triggerStyle={baseIconButtonStyle}
+            triggerStyle={profileTriggerStyle}
           />
           <DeviceSizeMenu
             selectedId={selectedDeviceSizeId}
@@ -1942,6 +1949,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
     flexShrink: 0,
+  },
+  profileTrigger: {
+    marginRight: theme.spacing[1],
   },
   iconButton: {
     width: 28,
