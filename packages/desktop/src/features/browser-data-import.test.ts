@@ -193,7 +193,15 @@ describe("browser data import", () => {
         confirmMerge: false,
       }),
     ).toThrow("Invalid source browser");
-    for (const spoofed of ["chrome\u2028spoof", "chrome\u202espoof", "chrome\u2066spoof"]) {
+    for (const spoofed of [
+      "chrome\u0085spoof",
+      "chrome\u061cspoof",
+      "chrome\u200bspoof",
+      "chrome\u2028spoof",
+      "chrome\u202espoof",
+      "chrome\u2066spoof",
+      "chrome\ufeffspoof",
+    ]) {
       expect(() =>
         normalizeBrowserImportRequest({
           sourceBrowserId: spoofed,

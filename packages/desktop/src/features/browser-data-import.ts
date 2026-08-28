@@ -31,15 +31,7 @@ export interface BrowserImportRequest {
 }
 
 function hasUnsafeDisplayCharacter(value: string): boolean {
-  return [...value].some((character) => {
-    const codePoint = character.codePointAt(0) ?? 0;
-    return (
-      codePoint <= 0x1f ||
-      codePoint === 0x7f ||
-      (codePoint >= 0x2028 && codePoint <= 0x202e) ||
-      (codePoint >= 0x2066 && codePoint <= 0x2069)
-    );
-  });
+  return /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(value);
 }
 
 function boundedDisplayString(value: unknown, field: string, maximum: number): string {

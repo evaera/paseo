@@ -1,6 +1,19 @@
 import { normalizeBrowserImportRequest, type BrowserImportRequest } from "./browser-data-import.js";
 
 const DEFAULT_CONSENT_TIMEOUT_MS = 5 * 60 * 1_000;
+const MAX_CONSENT_DOMAIN_DISPLAY_LENGTH = 1_000;
+
+export function formatBrowserImportConsentDetail(input: {
+  sourceName: string;
+  profileName: string;
+  request: BrowserImportRequest;
+}): string {
+  const domains = input.request.domains.join(", ");
+  if (domains.length > MAX_CONSENT_DOMAIN_DISPLAY_LENGTH) {
+    throw new Error("The complete browser import domain allowlist is too large to display safely");
+  }
+  return `Source: ${input.sourceName} / ${input.profileName}\nDestination: Default browser session\nDomains: ${domains}\nData: ${input.request.categories.join(", ")}\nMerge into existing data: ${input.request.confirmMerge ? "Yes" : "No"}`;
+}
 
 interface BrowserDataImportConsentQueueOptions<Event, Result> {
   confirm: (event: Event, request: BrowserImportRequest, signal: AbortSignal) => Promise<void>;

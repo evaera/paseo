@@ -90,6 +90,10 @@ class FakeBrowserBridge {
     return this.response ?? currentListTabsPayload(request.requestId);
   };
 
+  public importBrowserData = async (): Promise<never> => {
+    throw this.thrownError ?? new Error("Missing browser import test response");
+  };
+
   public unregisterWorkspaceBrowser = async (browserId: string): Promise<void> => {
     this.unregisteredWorkspaceBrowsers.push(browserId);
   };
@@ -162,6 +166,23 @@ function browserAutomationRequest(): BrowserAutomationExecuteRequest {
     type: "browser.automation.execute.request",
     requestId: "req-1",
     command: { command: "list_tabs", args: {} },
+  };
+}
+
+function browserImportRequest(): BrowserAutomationExecuteRequest {
+  return {
+    type: "browser.automation.execute.request",
+    requestId: "req-import",
+    command: {
+      command: "import_browser_data",
+      args: {
+        sourceBrowserId: "chrome",
+        sourceProfileId: "Default",
+        domains: ["example.com"],
+        categories: ["cookies"],
+        confirmMerge: false,
+      },
+    },
   };
 }
 
@@ -576,6 +597,49 @@ describe("mountBrowserAutomationHandler", () => {
         },
       },
     ]);
+  });
+
+  test("unwraps and forwards safe browser import errors from Electron invoke", async () => {
+    const safeMessages = [
+      "The Default browser session is not empty. Retry with explicit merge confirmation.",
+      "Import is already running",
+    ];
+
+    for (const safeMessage of safeMessages) {
+      const browser = new BrowserAutomationHandlerHarness();
+      browser.browser.thrownError = new Error(
+        `Error invoking remote method 'paseo:browser:import-data': Error: ${safeMessage}`,
+      );
+      browser.mount();
+      browser.receive(browserImportRequest());
+      await flushAsyncWork();
+
+      expect(browser.client.payloadAt(0)).toMatchObject({
+        requestId: "req-import",
+        ok: false,
+        error: { code: "browser_unknown_error", message: safeMessage },
+      });
+      browser.unmount();
+    }
+  });
+
+  test("does not forward arbitrary errors wrapped by Electron invoke", async () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    browser.browser.thrownError = new Error(
+      "Error invoking remote method 'paseo:browser:import-data': Error: /Users/private/Profile database failed",
+    );
+    browser.mount();
+    browser.receive(browserImportRequest());
+    await flushAsyncWork();
+
+    expect(browser.client.payloadAt(0)).toMatchObject({
+      requestId: "req-import",
+      ok: false,
+      error: {
+        code: "browser_unknown_error",
+        message: "Browser data import failed on the desktop host.",
+      },
+    });
   });
 
   test("unimplemented preload IPC reports browser_unsupported", async () => {

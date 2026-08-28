@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { BrowserImportRequest } from "./browser-data-import.js";
-import { BrowserDataImportConsentQueue } from "./browser-data-import-consent.js";
+import {
+  BrowserDataImportConsentQueue,
+  formatBrowserImportConsentDetail,
+} from "./browser-data-import-consent.js";
 
 const REQUEST = {
   sourceBrowserId: "chrome",
@@ -8,7 +11,7 @@ const REQUEST = {
   domains: ["example.com"],
   categories: ["cookies"],
   confirmMerge: false,
-};
+} satisfies BrowserImportRequest;
 
 interface Deferred<Value> {
   promise: Promise<Value>;
@@ -29,6 +32,28 @@ function requestWithOperationId(operationId: string) {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("browser data import consent display", () => {
+  test("renders the complete allowlist within the visible bound", () => {
+    expect(
+      formatBrowserImportConsentDetail({
+        sourceName: "Google Chrome",
+        profileName: "Default",
+        request: REQUEST,
+      }),
+    ).toContain("Domains: example.com");
+  });
+
+  test("fails closed when the complete allowlist exceeds the visible bound", () => {
+    expect(() =>
+      formatBrowserImportConsentDetail({
+        sourceName: "Google Chrome",
+        profileName: "Default",
+        request: { ...REQUEST, domains: ["a".repeat(1_001)] },
+      }),
+    ).toThrow("The complete browser import domain allowlist is too large to display safely");
+  });
 });
 
 describe("browser data import consent queue", () => {

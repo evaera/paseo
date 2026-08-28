@@ -4765,6 +4765,7 @@ export class DaemonClient {
         ...(options?.agentId ? { agentId: options.agentId } : {}),
       },
       responseType: "browser.command.execute.response",
+      ...(command.command === "import_browser_data" ? { timeout: 10 * 60 * 1_000 } : {}),
     });
   }
 

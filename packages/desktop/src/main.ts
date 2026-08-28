@@ -94,7 +94,10 @@ import {
   PendingSessionStorageRestores,
   SessionStorageRestoreError,
 } from "./features/browser-data-import-target.js";
-import { BrowserDataImportConsentQueue } from "./features/browser-data-import-consent.js";
+import {
+  BrowserDataImportConsentQueue,
+  formatBrowserImportConsentDetail,
+} from "./features/browser-data-import-consent.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
 import {
   createDesktopWindowOwner,
@@ -446,15 +449,15 @@ async function confirmBrowserImport(
   const profile = source?.profiles.find((candidate) => candidate.id === request.sourceProfileId);
   if (!source || !profile) throw new Error("Browser source profile is not available");
 
-  const domains = request.domains.join(", ");
-  if (domains.length > 4_000) {
-    throw new Error("The complete browser import domain allowlist is too large to display safely");
-  }
   const options: Electron.MessageBoxOptions = {
     type: "warning",
     title: "Allow browser data import?",
     message: "Paseo requested browser data import",
-    detail: `Source: ${source.name} / ${profile.name}\nDestination: Default browser session\nDomains: ${domains}\nData: ${request.categories.join(", ")}\nMerge into existing data: ${request.confirmMerge ? "Yes" : "No"}`,
+    detail: formatBrowserImportConsentDetail({
+      sourceName: source.name,
+      profileName: profile.name,
+      request,
+    }),
     buttons: ["Allow import", "Cancel"],
     defaultId: 1,
     cancelId: 1,
