@@ -107,12 +107,14 @@ class FakeResidentBrowser {
     browserId: string;
     workspaceId: string;
     url: string;
+    profileId?: string;
   }> = [];
 
   public ensure = (input: {
     browserId: string;
     workspaceId: string;
     url: string;
+    profileId?: string;
   }): HTMLElement | null => {
     this.ensuredWebviews.push(input);
     return null;
@@ -326,6 +328,7 @@ describe("mountBrowserAutomationHandler", () => {
         browserId: result.browserId,
         workspaceId: "wks_workspace_a",
         url: "https://example.com",
+        profileId: "default",
       },
     ]);
     expect(browser.browser.executedRequests).toEqual([
