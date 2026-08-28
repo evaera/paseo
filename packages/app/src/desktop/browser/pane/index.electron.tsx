@@ -20,6 +20,7 @@ import {
   ArrowRight,
   Camera,
   ChevronDown,
+  Download,
   Maximize,
   Monitor,
   MousePointer2,
@@ -60,6 +61,9 @@ import {
   getDesktopHost,
   isElectronRuntime,
   type DesktopBrowserProfile,
+  type DesktopBrowserImportCategory,
+  type DesktopBrowserImportResult,
+  type DesktopBrowserImportSource,
   type DesktopBrowserShortcutEvent,
 } from "@/desktop/host";
 import {
@@ -609,6 +613,7 @@ function BrowserProfileMenu({
   onSelect,
   onCreate,
   onDelete,
+  onImport,
   triggerStyle,
 }: {
   profiles: DesktopBrowserProfile[];
@@ -616,12 +621,14 @@ function BrowserProfileMenu({
   onSelect: (profileId: string) => void;
   onCreate: () => void;
   onDelete: (profileId: string) => void;
+  onImport: () => void;
   triggerStyle: (state: { hovered?: boolean; pressed?: boolean }) => StyleProp<ViewStyle>;
 }) {
   const createLeading = useMemo(
     () => <ThemedPlus size={16} uniProps={deviceMutedIconMapping} />,
     [],
   );
+  const importLeading = useMemo(() => <Download size={16} />, []);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger accessibilityLabel="Browser profile" style={triggerStyle}>
@@ -648,8 +655,297 @@ function BrowserProfileMenu({
           .map((profile) => (
             <BrowserProfileDeleteItem key={profile.id} profile={profile} onDelete={onDelete} />
           ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem leading={importLeading} onSelect={onImport}>
+          Import browser data...
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function BrowserImportSelectItem({
+  option,
+  selected,
+  onSelect,
+}: {
+  option: { id: string; name: string };
+  selected: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const handleSelect = useCallback(() => onSelect(option.id), [onSelect, option.id]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {option.name}
+    </DropdownMenuItem>
+  );
+}
+
+function BrowserImportCategoryToggle({
+  category,
+  selected,
+  onToggle,
+}: {
+  category: DesktopBrowserImportCategory;
+  selected: boolean;
+  onToggle: (category: DesktopBrowserImportCategory) => void;
+}) {
+  const handleToggle = useCallback(() => onToggle(category), [category, onToggle]);
+  return (
+    <Pressable style={styles.importToggle} onPress={handleToggle}>
+      <Text style={styles.importToggleMark}>{selected ? "✓" : ""}</Text>
+      <Text style={styles.importSelectText}>{category}</Text>
+    </Pressable>
+  );
+}
+
+function BrowserImportSelect({
+  label,
+  value,
+  options,
+  onSelect,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ id: string; name: string }>;
+  onSelect: (id: string) => void;
+}) {
+  const selected = options.find((option) => option.id === value);
+  return (
+    <View style={styles.importField}>
+      <Text style={styles.importLabel}>{label}</Text>
+      <DropdownMenu>
+        <DropdownMenuTrigger style={styles.importSelectTrigger}>
+          <Text style={styles.importSelectText}>{selected?.name ?? "Select..."}</Text>
+          <ChevronDown size={14} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          {options.map((option) => (
+            <BrowserImportSelectItem
+              key={option.id}
+              option={option}
+              selected={option.id === value}
+              onSelect={onSelect}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
+function BrowserImportModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const [sources, setSources] = useState<DesktopBrowserImportSource[]>([]);
+  const [sourceBrowserId, setSourceBrowserId] = useState("");
+  const [sourceProfileId, setSourceProfileId] = useState("");
+  const [domains, setDomains] = useState("");
+  const [categories, setCategories] = useState<DesktopBrowserImportCategory[]>(["cookies"]);
+  const [confirmMerge, setConfirmMerge] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [discoveryWarning, setDiscoveryWarning] = useState<string | null>(null);
+  const [result, setResult] = useState<DesktopBrowserImportResult | null>(null);
+  const operationIdRef = useRef<string | null>(null);
+  const modalRevisionRef = useRef(0);
+  const handleClose = useCallback(() => {
+    const operationId = operationIdRef.current;
+    if (operationId) void getDesktopHost()?.browser?.cancelBrowserDataImport?.(operationId);
+    onClose();
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    const revision = ++modalRevisionRef.current;
+    setSources([]);
+    setSourceBrowserId("");
+    setSourceProfileId("");
+    setDomains("");
+    setCategories(["cookies"]);
+    setConfirmMerge(false);
+    setPending(false);
+    setError(null);
+    setDiscoveryWarning(null);
+    setResult(null);
+    const discovery = getDesktopHost()?.browser?.listImportSources?.();
+    if (!discovery) {
+      setError("Browser data import is unavailable.");
+      return;
+    }
+    void discovery
+      .then((response) => {
+        if (cancelled) return undefined;
+        setSources(response.sources);
+        const firstSource = response.sources[0];
+        if (firstSource) {
+          setSourceBrowserId(firstSource.id);
+          setSourceProfileId(firstSource.profiles[0]?.id ?? "");
+        }
+        if (response.warnings.length > 0) setDiscoveryWarning(response.warnings.join(" "));
+        return undefined;
+      })
+      .catch((cause) => {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : "Could not list browsers.");
+        }
+        return undefined;
+      });
+    return () => {
+      cancelled = true;
+      const operationId = operationIdRef.current;
+      if (operationId) void getDesktopHost()?.browser?.cancelBrowserDataImport?.(operationId);
+      if (modalRevisionRef.current === revision) modalRevisionRef.current += 1;
+    };
+  }, [visible]);
+
+  const selectedSource = sources.find((source) => source.id === sourceBrowserId);
+  const handleSelectSource = useCallback(
+    (id: string) => {
+      const source = sources.find((candidate) => candidate.id === id);
+      setSourceBrowserId(id);
+      setSourceProfileId(source?.profiles[0]?.id ?? "");
+    },
+    [sources],
+  );
+  const toggleCategory = useCallback((category: DesktopBrowserImportCategory) => {
+    setCategories((current) => {
+      if (!current.includes(category)) return [...current, category];
+      if (current.length === 1) return current;
+      return current.filter((candidate) => candidate !== category);
+    });
+  }, []);
+  const toggleMerge = useCallback(() => setConfirmMerge((value) => !value), []);
+  const handleImport = useCallback(async () => {
+    const browserHost = getDesktopHost()?.browser;
+    if (!browserHost?.importBrowserData) return;
+    setPending(true);
+    setError(null);
+    const operationId = crypto.randomUUID();
+    const revision = modalRevisionRef.current;
+    operationIdRef.current = operationId;
+    try {
+      const imported = await browserHost.importBrowserData({
+        sourceBrowserId,
+        sourceProfileId,
+        domains: domains
+          .split(",")
+          .map((domain) => domain.trim())
+          .filter(Boolean),
+        categories,
+        confirmMerge,
+        operationId,
+      });
+      if (modalRevisionRef.current === revision) setResult(imported);
+    } catch (cause) {
+      if (modalRevisionRef.current === revision) {
+        setError(cause instanceof Error ? cause.message : "Browser data import failed.");
+      }
+    } finally {
+      if (operationIdRef.current === operationId) operationIdRef.current = null;
+      if (modalRevisionRef.current === revision) setPending(false);
+    }
+  }, [categories, confirmMerge, domains, sourceBrowserId, sourceProfileId]);
+
+  return (
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={handleClose}>
+      <View style={styles.importModalBackdrop}>
+        <View style={styles.importModalCard}>
+          <Text style={styles.importModalTitle}>Import browser data</Text>
+          {result ? (
+            <View style={styles.importFields}>
+              {(["cookies", "localStorage", "sessionStorage"] as const).map((category) => (
+                <Text key={category} style={styles.importSummary}>
+                  {category}: {result.counts[category].imported} imported,{" "}
+                  {"queued" in result.counts[category]
+                    ? `${result.counts[category].queued} queued, `
+                    : ""}
+                  {result.counts[category].skipped} skipped
+                </Text>
+              ))}
+              {result.warnings.map((warning) => (
+                <Text key={warning} style={styles.importWarning}>
+                  {warning}
+                </Text>
+              ))}
+              <View style={styles.importModalActions}>
+                <Button onPress={handleClose}>Done</Button>
+              </View>
+            </View>
+          ) : (
+            <>
+              <Text style={styles.importWarning}>
+                Only allowlisted cookies and safely readable site storage are considered. History,
+                bookmarks, passwords, autofill, downloads, cache, tabs, and extensions are never
+                read.
+              </Text>
+              <View style={styles.importFields}>
+                <BrowserImportSelect
+                  label="Source browser"
+                  value={sourceBrowserId}
+                  options={sources}
+                  onSelect={handleSelectSource}
+                />
+                <BrowserImportSelect
+                  label="Source profile"
+                  value={sourceProfileId}
+                  options={selectedSource?.profiles ?? []}
+                  onSelect={setSourceProfileId}
+                />
+                <Text style={styles.importWarning}>
+                  Data will be merged into the Default browser session.
+                </Text>
+                <View style={styles.importField}>
+                  <Text style={styles.importLabel}>Allowed domains</Text>
+                  <TextInput
+                    accessibilityLabel="Allowed domains"
+                    initialValue={domains}
+                    onChangeText={setDomains}
+                    placeholder="example.com, app.example.com"
+                    style={styles.importModalInput}
+                  />
+                </View>
+                <View style={styles.importField}>
+                  <Text style={styles.importLabel}>Data categories</Text>
+                  {(["cookies", "localStorage", "sessionStorage"] as const).map((category) => (
+                    <BrowserImportCategoryToggle
+                      key={category}
+                      category={category}
+                      selected={categories.includes(category)}
+                      onToggle={toggleCategory}
+                    />
+                  ))}
+                </View>
+                <Pressable style={styles.importToggle} onPress={toggleMerge}>
+                  <Text style={styles.importToggleMark}>{confirmMerge ? "✓" : ""}</Text>
+                  <Text style={styles.importSelectText}>
+                    Merge into existing Default browser data
+                  </Text>
+                </Pressable>
+              </View>
+              {discoveryWarning ? (
+                <Text style={styles.importWarning}>{discoveryWarning}</Text>
+              ) : null}
+              {error ? (
+                <Text accessibilityRole="alert" style={styles.importModalError}>
+                  {error}
+                </Text>
+              ) : null}
+              <View style={styles.importModalActions}>
+                <Button variant="ghost" onPress={handleClose}>
+                  Cancel
+                </Button>
+                <Button
+                  disabled={pending || !sourceBrowserId || !sourceProfileId || !domains.trim()}
+                  onPress={handleImport}
+                >
+                  {pending ? "Importing..." : "Import"}
+                </Button>
+              </View>
+            </>
+          )}
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -708,6 +1004,9 @@ export function BrowserPane({
   const pendingNavigationUrlRef = useRef<string | null>(null);
   const annotationMarkersRef = useRef<BrowserAnnotationMarker[]>([]);
   const [selectorMode, setSelectorMode] = useState<"annotate" | "screenshot" | null>(null);
+  const [browserImportOpen, setBrowserImportOpen] = useState(false);
+  const handleOpenBrowserImport = useCallback(() => setBrowserImportOpen(true), []);
+  const handleCloseBrowserImport = useCallback(() => setBrowserImportOpen(false), []);
   const selectorControllerRef = useRef<ReturnType<typeof createElementSelectorController> | null>(
     null,
   );
@@ -1633,6 +1932,7 @@ export function BrowserPane({
 
   return (
     <View style={styles.container}>
+      <BrowserImportModal visible={browserImportOpen} onClose={handleCloseBrowserImport} />
       <View style={styles.chromeRow}>
         <View style={styles.chromeLeft}>
           <ToolbarButton
@@ -1685,6 +1985,7 @@ export function BrowserPane({
             onSelect={handleSelectProfile}
             onCreate={handleOpenCreateProfile}
             onDelete={handleDeleteProfile}
+            onImport={handleOpenBrowserImport}
             triggerStyle={profileTriggerStyle}
           />
           <DeviceSizeMenu
@@ -2122,6 +2423,82 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "flex-end",
     gap: theme.spacing[2],
   },
+  importModalBackdrop: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: theme.spacing[4],
+  },
+  importModalCard: {
+    width: "100%",
+    maxWidth: 520,
+    maxHeight: "90%",
+    gap: theme.spacing[3],
+    padding: theme.spacing[4],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
+  },
+  importModalTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.lg,
+    fontWeight: "500",
+  },
+  importModalInput: {
+    minHeight: 40,
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface1,
+    color: theme.colors.foreground,
+  },
+  importModalError: {
+    color: theme.colors.statusDanger,
+    fontSize: theme.fontSize.sm,
+  },
+  importModalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[2],
+  },
+  importFields: { gap: theme.spacing[3] },
+  importField: { gap: theme.spacing[1] },
+  importLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "500",
+  },
+  importSelectTrigger: {
+    minHeight: 40,
+    paddingHorizontal: theme.spacing[3],
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface1,
+  },
+  importSelectText: { color: theme.colors.foreground, fontSize: theme.fontSize.base },
+  importToggle: {
+    minHeight: 32,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  importToggleMark: {
+    width: 18,
+    height: 18,
+    textAlign: "center",
+    color: theme.colors.foreground,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.sm,
+  },
+  importWarning: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
+  importSummary: { color: theme.colors.foreground, fontSize: theme.fontSize.base },
   unavailableState: {
     flex: 1,
     alignItems: "center",

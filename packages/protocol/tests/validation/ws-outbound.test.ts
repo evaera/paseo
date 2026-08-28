@@ -144,7 +144,7 @@ const SourceSchema = z.object({
       payload: {
         requestId: "browser-success",
         ok: true,
-        result: { command: "list_tabs", tabs: [] },
+        result: { command: "list_import_sources", sources: [], warnings: [] }
       },
     },
     {
@@ -180,7 +180,7 @@ const SourceSchema = z.object({
         type: "browser.command.execute.response",
         payload: {
           requestId: "browser-missing-ok",
-          result: { command: "list_tabs", tabs: [] },
+          result: { command: "list_import_sources", sources: [], warnings: [] }
         },
       },
     };

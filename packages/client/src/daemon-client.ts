@@ -4797,7 +4797,7 @@ export class DaemonClient {
     command: BrowserAutomationCommand,
     options?: { workspaceId?: string; cwd?: string; agentId?: string; requestId?: string },
   ): Promise<BrowserCommandExecuteResponse["payload"]> {
-    const response = await this.sendCorrelatedSessionRequest({
+    return this.sendCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {
         type: "browser.command.execute.request",
@@ -4807,8 +4807,8 @@ export class DaemonClient {
         ...(options?.agentId ? { agentId: options.agentId } : {}),
       },
       responseType: "browser.command.execute.response",
+      ...(command.command === "import_browser_data" ? { timeout: 10 * 60 * 1_000 + 1_000 } : {}),
     });
-    return response;
   }
 
   async readProjectConfig(repoRoot: string, requestId?: string): Promise<ReadProjectConfigPayload> {

@@ -1110,6 +1110,74 @@ test("defaults session RPC waiters to sixty seconds", async () => {
   await expect(responsePromise).rejects.toThrow("Timeout waiting for message (60000ms)");
 });
 
+test("keeps browser data imports pending beyond the ordinary command timeout", async () => {
+  useHeartbeatClock();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_browser_import_timeout",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const importResponse = client.executeBrowserCommand(
+    {
+      command: "import_browser_data",
+      args: {
+        sourceBrowserId: "chrome",
+        sourceProfileId: "Default",
+        domains: ["example.com"],
+        categories: ["cookies"],
+        confirmMerge: false,
+      },
+    },
+    { requestId: "req-import" },
+  );
+  let importSettled = false;
+  void importResponse.finally(() => {
+    importSettled = true;
+  });
+
+  const ordinaryResponse = client.executeBrowserCommand(
+    { command: "list_import_sources", args: {} },
+    { requestId: "req-list" },
+  );
+  const ordinaryRejection = expect(ordinaryResponse).rejects.toThrow(
+    "Timeout waiting for message (60000ms)",
+  );
+
+  await vi.advanceTimersByTimeAsync(60_001);
+  await ordinaryRejection;
+  expect(importSettled).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(9 * 60 * 1_000 - 1);
+  expect(importSettled).toBe(false);
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "browser.command.execute.response",
+      payload: {
+        requestId: "req-import",
+        ok: false,
+        error: {
+          code: "browser_timeout",
+          message: "Browser automation timed out after 600000ms.",
+          retryable: false,
+        },
+      },
+    }),
+  );
+  await expect(importResponse).resolves.toMatchObject({
+    requestId: "req-import",
+    ok: false,
+    error: { code: "browser_timeout" },
+  });
+});
+
 test("honors explicit fetchAgent timeout below the session RPC default", async () => {
   useHeartbeatClock();
   const logger = createMockLogger();

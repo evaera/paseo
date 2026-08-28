@@ -6,6 +6,7 @@ log.initialize({ spyRendererConsole: true });
 
 import { inheritLoginShellEnv } from "./login-shell-env.js";
 
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
@@ -84,6 +85,24 @@ import {
   createBrowserProfilesStore,
   deleteBrowserProfileWithConfirmation,
 } from "./features/browser-profiles.js";
+import {
+  importBrowserData,
+  listBrowserImportSources,
+  sweepStaleBrowserImportDirectories,
+  type BrowserImportRequest,
+  type BrowserOriginStorageRecord,
+  type BrowserStorageImportOutcome,
+} from "./features/browser-data-import.js";
+import {
+  injectLocalStorageWithInertOrigins,
+  installSessionStorageRestore,
+  PendingSessionStorageRestores,
+  SessionStorageRestoreError,
+} from "./features/browser-data-import-target.js";
+import {
+  BrowserDataImportConsentQueue,
+  formatBrowserImportConsentDetail,
+} from "./features/browser-data-import-consent.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
 import {
   createDesktopWindowOwner,
@@ -460,6 +479,119 @@ ipcMain.handle("paseo:browser:profiles:delete", async (event, profileId: unknown
   return deleted;
 });
 
+ipcMain.handle("paseo:browser:import-sources", () => listBrowserImportSources());
+void sweepStaleBrowserImportDirectories();
+const pendingSessionStorage = new PendingSessionStorageRestores();
+let browserLocalStorageImport: Promise<BrowserStorageImportOutcome> | null = null;
+
+async function injectBrowserLocalStorage(
+  records: BrowserOriginStorageRecord[],
+  signal?: AbortSignal,
+): Promise<BrowserStorageImportOutcome> {
+  if (records.length === 0) return { imported: 0, skipped: 0 };
+
+  const ready =
+    browserLocalStorageImport?.catch(() => ({ imported: 0, skipped: 0 })) ??
+    Promise.resolve({ imported: 0, skipped: 0 });
+  const importing = ready.then(async () => {
+    signal?.throwIfAborted();
+    const hiddenWindow = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        session: session.fromPartition(PASEO_BROWSER_PROFILE_PARTITION),
+        sandbox: true,
+        contextIsolation: true,
+        javascript: false,
+        nodeIntegration: false,
+        webSecurity: true,
+      },
+    });
+    try {
+      return await injectLocalStorageWithInertOrigins(hiddenWindow.webContents, records, signal);
+    } finally {
+      hiddenWindow.destroy();
+    }
+  });
+  browserLocalStorageImport = importing;
+  try {
+    return await importing;
+  } finally {
+    if (browserLocalStorageImport === importing) browserLocalStorageImport = null;
+  }
+}
+
+async function confirmBrowserImport(
+  event: Electron.IpcMainInvokeEvent,
+  request: BrowserImportRequest,
+): Promise<void> {
+  if (process.platform !== "darwin") {
+    throw new Error("Browser data import is currently supported on macOS only");
+  }
+  const discovery = await listBrowserImportSources();
+  const source = discovery.sources.find((candidate) => candidate.id === request.sourceBrowserId);
+  const profile = source?.profiles.find((candidate) => candidate.id === request.sourceProfileId);
+  if (!source || !profile) throw new Error("Browser source profile is not available");
+
+  const options: Electron.MessageBoxOptions = {
+    type: "warning",
+    title: "Allow browser data import?",
+    message: "Paseo requested browser data import",
+    detail: formatBrowserImportConsentDetail({
+      sourceName: source.name,
+      profileName: profile.name,
+      request,
+    }),
+    buttons: ["Allow import", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  };
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const answer = owner
+    ? await dialog.showMessageBox(owner, options)
+    : await dialog.showMessageBox(options);
+  if (answer.response !== 0) throw new Error("Browser data import was denied by the user");
+}
+
+async function runBrowserDataImport(
+  _event: Electron.IpcMainInvokeEvent,
+  request: BrowserImportRequest,
+  _rawRequest: unknown,
+  signal: AbortSignal,
+) {
+  return importBrowserData({
+    request,
+    targetSession: session.fromPartition(PASEO_BROWSER_PROFILE_PARTITION),
+    injectLocalStorage: (records, importSignal) => injectBrowserLocalStorage(records, importSignal),
+    queueSessionStorage: async (records) =>
+      pendingSessionStorage.queue({
+        partition: PASEO_BROWSER_PROFILE_PARTITION,
+        records,
+        confirmMerge: request.confirmMerge,
+      }),
+    hasPendingSessionStorage: () => pendingSessionStorage.has(PASEO_BROWSER_PROFILE_PARTITION),
+    signal,
+  });
+}
+
+const browserDataImportQueue = new BrowserDataImportConsentQueue({
+  confirm: confirmBrowserImport,
+  importData: runBrowserDataImport,
+});
+ipcMain.handle("paseo:browser:import-data", async (event, request) => {
+  const cancel = () => browserDataImportQueue.cancelForEvent(event);
+  event.sender.once("destroyed", cancel);
+  try {
+    return await browserDataImportQueue.run(event, request);
+  } finally {
+    event.sender.removeListener("destroyed", cancel);
+  }
+});
+ipcMain.handle("paseo:browser:import-cancel", (_event, operationId: unknown) => {
+  if (typeof operationId !== "string") return false;
+  return browserDataImportQueue.cancel(operationId);
+});
+
 ipcMain.handle("paseo:browser:register-attached", async (event, rawInput: unknown) => {
   const input = readAttachedBrowserInput(rawInput);
   if (!input) {
@@ -609,6 +741,7 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
       log.warn("[browser-profile] failed to reload guest", { webContentsId, error });
     },
   });
+  pendingSessionStorage.clear(PASEO_BROWSER_PROFILE_PARTITION);
 });
 
 const browserCapture = createBrowserCaptureService<Electron.NativeImage>({
@@ -779,6 +912,14 @@ async function createWindow(
   });
   applyDesktopWindowChromeMode({ win: mainWindow, mode: DESKTOP_WINDOW_CHROME_MODE });
 
+  const pendingBrowserAttaches = new Map<
+    string,
+    {
+      partition: string;
+      initialUrl: string;
+      sessionStorage: BrowserOriginStorageRecord[];
+    }
+  >();
   const webContentsId = mainWindow.webContents.id;
   options.onCreated?.(webContentsId);
   mainWindow.webContents.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {
@@ -787,6 +928,10 @@ async function createWindow(
     }
   });
   mainWindow.on("closed", () => {
+    for (const pendingAttach of pendingBrowserAttaches.values()) {
+      pendingSessionStorage.restore(pendingAttach.partition, pendingAttach.sessionStorage);
+    }
+    pendingBrowserAttaches.clear();
     options.onClosed?.(webContentsId);
     agentNavigationInbox.removeWindow(webContentsId);
     unregisterPaseoBrowserHost(webContentsId);
@@ -817,6 +962,27 @@ async function createWindow(
       event.preventDefault();
       return;
     }
+    const partition = params.partition as string;
+    const initialUrl = typeof params.src === "string" ? params.src : "";
+    const sessionStorageRestore =
+      partition === PASEO_BROWSER_PROFILE_PARTITION
+        ? pendingSessionStorage.claim(partition, initialUrl)
+        : [];
+    if (sessionStorageRestore.length > 0) {
+      const attachToken = randomUUID();
+      pendingBrowserAttaches.set(attachToken, {
+        partition,
+        initialUrl,
+        sessionStorage: sessionStorageRestore,
+      });
+      webPreferences.additionalArguments = [
+        ...(webPreferences.additionalArguments ?? []).filter(
+          (argument) => !argument.startsWith("--paseo-browser-attach-token="),
+        ),
+        `--paseo-browser-attach-token=${attachToken}`,
+      ];
+      params.src = "about:blank";
+    }
     webPreferences.nodeIntegration = false;
     // The sandboxed keyboard preload must run in every frame so focused iframes keep
     // the same page-first shortcut boundary. Node integration remains disabled.
@@ -835,6 +1001,56 @@ async function createWindow(
   });
   mainWindow.webContents.on("did-attach-webview", (_event, contents) => {
     preparePaseoBrowserWebContents(contents);
+    const attachArgument = (
+      contents as Electron.WebContents & {
+        getLastWebPreferences(): { additionalArguments?: string[] } | null;
+      }
+    )
+      .getLastWebPreferences()
+      ?.additionalArguments?.find((argument: string) =>
+        argument.startsWith("--paseo-browser-attach-token="),
+      );
+    if (attachArgument) {
+      const attachToken = attachArgument.slice("--paseo-browser-attach-token=".length);
+      const pendingAttach = pendingBrowserAttaches.get(attachToken);
+      pendingBrowserAttaches.delete(attachToken);
+      if (
+        !pendingAttach ||
+        pendingAttach.partition !== PASEO_BROWSER_PROFILE_PARTITION ||
+        contents.session !== session.fromPartition(PASEO_BROWSER_PROFILE_PARTITION)
+      ) {
+        if (pendingAttach) {
+          pendingSessionStorage.restore(pendingAttach.partition, pendingAttach.sessionStorage);
+        }
+        contents.close();
+        log.warn("[browser-import] rejected mismatched sessionStorage restore guest");
+        return;
+      }
+      void installSessionStorageRestore(
+        contents,
+        pendingAttach.sessionStorage,
+        pendingAttach.initialUrl,
+      )
+        .then((outcome) => {
+          pendingSessionStorage.restore(pendingAttach.partition, outcome.unapplied);
+          return undefined;
+        })
+        .catch((error) => {
+          pendingSessionStorage.restore(
+            pendingAttach.partition,
+            error instanceof SessionStorageRestoreError
+              ? error.unapplied
+              : pendingAttach.sessionStorage,
+          );
+          // Never pass storage values or a CDP error that may echo parameters to logging.
+          log.warn("[browser-import] sessionStorage restore failed");
+          if (!contents.isDestroyed()) {
+            void contents.loadURL(pendingAttach.initialUrl).catch(() => {
+              log.warn("[browser-import] failed to navigate after sessionStorage requeue");
+            });
+          }
+        });
+    }
     contents.once("destroyed", () => {
       pendingBrowserWindowOpenRequests.delete(contents.id);
     });

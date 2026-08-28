@@ -1727,6 +1727,8 @@ export class VoiceAssistantWebSocketServer {
         plugins: true,
         // COMPAT(browserCommandRpc): added in v0.7.0, remove gate after 2027-08-27.
         browserCommandRpc: true,
+        // COMPAT(browserDataImport): added in v0.7.0, remove gate after 2027-08-27.
+        browserDataImport: true,
         pluginManagement: true,
         pluginGitManagement: true,
         pluginLogs: true,

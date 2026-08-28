@@ -107,6 +107,14 @@ class FakeBrowserBridge {
     return this.response ?? currentListTabsPayload(request.requestId);
   };
 
+  public listImportSources = async (): Promise<never> => {
+    throw this.thrownError ?? new Error("Missing browser import sources test response");
+  };
+
+  public importBrowserData = async (): Promise<never> => {
+    throw this.thrownError ?? new Error("Missing browser import test response");
+  };
+
   public unregisterWorkspaceBrowser = async (browserId: string): Promise<void> => {
     this.unregisteredWorkspaceBrowsers.push(browserId);
   };
@@ -181,6 +189,31 @@ function browserAutomationRequest(): BrowserAutomationExecuteRequest {
     type: "browser.automation.execute.request",
     requestId: "req-1",
     command: { command: "list_tabs", args: {} },
+  };
+}
+
+function browserImportSourcesRequest(): BrowserAutomationExecuteRequest {
+  return {
+    type: "browser.automation.execute.request",
+    requestId: "req-import-sources",
+    command: { command: "list_import_sources", args: {} },
+  };
+}
+
+function browserImportRequest(): BrowserAutomationExecuteRequest {
+  return {
+    type: "browser.automation.execute.request",
+    requestId: "req-import",
+    command: {
+      command: "import_browser_data",
+      args: {
+        sourceBrowserId: "chrome",
+        sourceProfileId: "Default",
+        domains: ["example.com"],
+        categories: ["cookies"],
+        confirmMerge: false,
+      },
+    },
   };
 }
 
@@ -637,6 +670,63 @@ describe("mountBrowserAutomationHandler", () => {
         },
       },
     ]);
+  });
+
+  test("unwraps and forwards safe browser import errors from fixed Electron channels", async () => {
+    const cases = [
+      {
+        channel: "import-data",
+        request: browserImportRequest(),
+        message:
+          "The Default browser session is not empty. Retry with explicit merge confirmation.",
+      },
+      {
+        channel: "import-data",
+        request: browserImportRequest(),
+        message: "Browser source profile is no longer available",
+      },
+      {
+        channel: "import-sources",
+        request: browserImportSourcesRequest(),
+        message: "Browser data import is currently supported on macOS only",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const browser = new BrowserAutomationHandlerHarness();
+      browser.browser.thrownError = new Error(
+        `Error invoking remote method 'paseo:browser:${testCase.channel}': Error: ${testCase.message}`,
+      );
+      browser.mount();
+      browser.receive(testCase.request);
+      await flushAsyncWork();
+
+      expect(browser.client.payloadAt(0)).toMatchObject({
+        requestId: testCase.request.requestId,
+        ok: false,
+        error: { code: "browser_unknown_error", message: testCase.message },
+      });
+      browser.unmount();
+    }
+  });
+
+  test("does not forward arbitrary errors wrapped by Electron invoke", async () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    browser.browser.thrownError = new Error(
+      "Error invoking remote method 'paseo:browser:import-data': Error: /Users/private/Profile database failed",
+    );
+    browser.mount();
+    browser.receive(browserImportRequest());
+    await flushAsyncWork();
+
+    expect(browser.client.payloadAt(0)).toMatchObject({
+      requestId: "req-import",
+      ok: false,
+      error: {
+        code: "browser_unknown_error",
+        message: "Browser data import failed on the desktop host.",
+      },
+    });
   });
 
   test("unimplemented preload IPC reports browser_unsupported", async () => {

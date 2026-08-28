@@ -27,6 +27,8 @@ export const BROWSER_AUTOMATION_COMMAND_NAMES = [
   "list_profiles",
   "create_profile",
   "delete_profile",
+  "list_import_sources",
+  "import_browser_data",
   "new_tab",
   "snapshot",
   "click",
@@ -92,6 +94,26 @@ export const BrowserAutomationCreateProfileCommandSchema = z.object({
 export const BrowserAutomationDeleteProfileCommandSchema = z.object({
   command: z.literal("delete_profile"),
   args: z.object({ profile: z.string().trim().min(1).max(80) }).strict(),
+});
+
+export const BrowserImportCategorySchema = z.enum(["cookies", "localStorage", "sessionStorage"]);
+
+export const BrowserAutomationListImportSourcesCommandSchema = z.object({
+  command: z.literal("list_import_sources"),
+  args: z.object({}).strict().default({}),
+});
+
+export const BrowserAutomationImportBrowserDataCommandSchema = z.object({
+  command: z.literal("import_browser_data"),
+  args: z
+    .object({
+      sourceBrowserId: z.string().trim().min(1).max(80),
+      sourceProfileId: z.string().trim().min(1).max(160),
+      domains: z.array(z.string().trim().min(1).max(253)).min(1).max(100),
+      categories: z.array(BrowserImportCategorySchema).min(1).max(3),
+      confirmMerge: z.boolean().default(false),
+    })
+    .strict(),
 });
 
 export const BrowserAutomationNewTabCommandSchema = z.object({
@@ -258,6 +280,8 @@ export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationListProfilesCommandSchema,
   BrowserAutomationCreateProfileCommandSchema,
   BrowserAutomationDeleteProfileCommandSchema,
+  BrowserAutomationListImportSourcesCommandSchema,
+  BrowserAutomationImportBrowserDataCommandSchema,
   BrowserAutomationNewTabCommandSchema,
   BrowserAutomationSnapshotCommandSchema,
   BrowserAutomationClickCommandSchema,
@@ -318,6 +342,39 @@ export const BrowserAutomationCreateProfileResultSchema = z.object({
 export const BrowserAutomationDeleteProfileResultSchema = z.object({
   command: z.literal("delete_profile"),
   profileId: z.string().min(1),
+});
+
+export const BrowserImportSourceProfileSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+});
+
+export const BrowserImportSourceSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  profiles: z.array(BrowserImportSourceProfileSchema),
+});
+
+export const BrowserAutomationListImportSourcesResultSchema = z.object({
+  command: z.literal("list_import_sources"),
+  sources: z.array(BrowserImportSourceSchema),
+  warnings: z.array(z.string()),
+});
+
+export const BrowserImportCategoryCountSchema = z.object({
+  imported: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+  queued: z.number().int().nonnegative().optional(),
+});
+
+export const BrowserAutomationImportBrowserDataResultSchema = z.object({
+  command: z.literal("import_browser_data"),
+  counts: z.object({
+    cookies: BrowserImportCategoryCountSchema,
+    localStorage: BrowserImportCategoryCountSchema,
+    sessionStorage: BrowserImportCategoryCountSchema,
+  }),
+  warnings: z.array(z.string()),
 });
 
 export const BrowserAutomationNewTabResultSchema = z.object({
@@ -510,6 +567,8 @@ export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationListProfilesResultSchema,
   BrowserAutomationCreateProfileResultSchema,
   BrowserAutomationDeleteProfileResultSchema,
+  BrowserAutomationListImportSourcesResultSchema,
+  BrowserAutomationImportBrowserDataResultSchema,
   BrowserAutomationNewTabResultSchema,
   BrowserAutomationSnapshotResultSchema,
   BrowserAutomationClickResultSchema,

@@ -87,6 +87,15 @@ describe("preload sandbox safety", () => {
     expect(disallowed).toEqual([]);
   });
 
+  it("exposes one browser import method backed by the consent-enforcing main channel", () => {
+    const source = readFileSync(preloadPath, "utf8");
+
+    expect(source.match(/importBrowserData:/g)).toHaveLength(1);
+    expect(source).toContain('ipcRenderer.invoke("paseo:browser:import-data", request)');
+    expect(source).not.toContain("import-data-ui");
+    expect(source).not.toContain("importBrowserDataFromUi");
+  });
+
   it("inlines the browser profile partition instead of importing it", () => {
     const source = readFileSync(preloadPath, "utf8");
     const match = source.match(/const\s+PASEO_BROWSER_PROFILE_PARTITION\s*=\s*"([^"]+)"/);

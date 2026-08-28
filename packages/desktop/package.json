@@ -23,14 +23,17 @@
     "test:e2e:renderer": "cross-env E2E_DESKTOP_RUNTIME=1 playwright test --config=playwright.config.ts --project=desktop",
     "test:e2e:browser-tabs": "npm run build:main && node ./e2e/browser-tabs.e2e.mjs",
     "verify:electron-cdp": "node ./scripts/verify-electron-cdp.mjs",
+    "verify:browser-data-import": "npm run build:main && node ./scripts/run-browser-data-import-verifier.mjs",
     "test": "vitest run --exclude \"e2e/**\"",
     "typecheck": "tsgo --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@getpaseo/cli": "*",
     "@getpaseo/server": "*",
+    "classic-level": "^3.0.0",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.6.2",
+    "psl": "^1.15.0",
     "ws": "^8.14.2",
     "zod": "^4.4.3"
   },

@@ -121,6 +121,62 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
   );
 
   options.registerTool(
+    "browser_list_import_sources",
+    {
+      title: "List browser import sources",
+      description:
+        "List installed macOS Chromium-family browsers and source profiles available for site-state import. No browsing data or secret values are returned.",
+      inputSchema: {},
+    },
+    async () => {
+      const context = resolveBrowserToolContext(options);
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        command: { command: "list_import_sources", args: {} },
+      });
+      return browserToolResult({ payload, context });
+    },
+  );
+
+  options.registerTool(
+    "browser_import_browser_data",
+    {
+      title: "Import browser data",
+      description:
+        "Import allowlisted cookies and safely readable origin storage into Paseo's Default browser session. Imports fail closed when the fully displayed domain allowlist exceeds 1,000 characters. History, bookmarks, passwords, autofill, downloads, cache, tabs, and extensions are never inspected.",
+      inputSchema: {
+        sourceBrowserId: z.string().trim().min(1).max(80),
+        sourceProfileId: z.string().trim().min(1).max(160),
+        domains: z.array(z.string().trim().min(1).max(253)).min(1).max(100),
+        categories: z
+          .array(z.enum(["cookies", "localStorage", "sessionStorage"]))
+          .min(1)
+          .max(3),
+        confirmMerge: z.boolean().optional(),
+      },
+    },
+    async ({ sourceBrowserId, sourceProfileId, domains, categories, confirmMerge }) => {
+      const context = resolveBrowserToolContext(options);
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        command: {
+          command: "import_browser_data",
+          args: {
+            sourceBrowserId,
+            sourceProfileId,
+            domains,
+            categories,
+            confirmMerge: confirmMerge ?? false,
+          },
+        },
+      });
+      return browserToolResult({ payload, context });
+    },
+  );
+
+  options.registerTool(
     "browser_list_tabs",
     {
       title: "List browser tabs",

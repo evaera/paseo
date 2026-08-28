@@ -72,6 +72,10 @@ class BrowserToolHarness {
     return Array.from(this.tools.keys());
   }
 
+  public description(name: string): string | undefined {
+    return this.get(name).config.description;
+  }
+
   private get(name: string): RegisteredTool {
     const tool = this.tools.get(name);
     if (!tool) {
@@ -545,6 +549,8 @@ describe("registerBrowserTools", () => {
       "browser_list_profiles",
       "browser_create_profile",
       "browser_delete_profile",
+      "browser_list_import_sources",
+      "browser_import_browser_data",
       "browser_list_tabs",
       "browser_new_tab",
       "browser_snapshot",
@@ -568,6 +574,50 @@ describe("registerBrowserTools", () => {
       "browser_resize",
       "browser_close_tab",
     ]);
+  });
+
+  test("browser import tool documents the consent allowlist limit", () => {
+    const harness = new BrowserToolHarness();
+
+    expect(harness.description("browser_import_browser_data")).toContain(
+      "fully displayed domain allowlist exceeds 1,000 characters",
+    );
+  });
+
+  test("browser import tools send transport-neutral commands without secret fields", async () => {
+    const harness = new BrowserToolHarness();
+
+    await harness.execute("browser_list_import_sources", {});
+    await harness.execute("browser_import_browser_data", {
+      sourceBrowserId: "chrome",
+      sourceProfileId: "Default",
+      domains: ["example.com"],
+      categories: ["cookies"],
+      confirmMerge: true,
+    });
+
+    expect(harness.broker.calls).toEqual([
+      {
+        agentId: "agent-1",
+        cwd: "/repo",
+        command: { command: "list_import_sources", args: {} },
+      },
+      {
+        agentId: "agent-1",
+        cwd: "/repo",
+        command: {
+          command: "import_browser_data",
+          args: {
+            sourceBrowserId: "chrome",
+            sourceProfileId: "Default",
+            domains: ["example.com"],
+            categories: ["cookies"],
+            confirmMerge: true,
+          },
+        },
+      },
+    ]);
+    expect(JSON.stringify(harness.broker.calls)).not.toContain("cookieValue");
   });
 
   test("list tabs sends workspace in the request envelope", async () => {

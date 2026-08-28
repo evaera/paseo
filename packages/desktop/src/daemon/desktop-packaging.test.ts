@@ -89,6 +89,12 @@ describe("desktop packaging", () => {
     expect(config).toContain("!node_modules/@getpaseo/server/dist/server/web-ui/**");
   });
 
+  it("unpacks classic-level so its native binding can load in packaged imports", () => {
+    const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
+
+    expect(config).toContain("node_modules/classic-level/**/*");
+  });
+
   it("uses the server skill catalog without a duplicate desktop resource", () => {
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
     const serverPackage = readFileSync(join(packageRoot, "..", "server", "package.json"), "utf8");

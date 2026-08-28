@@ -44,6 +44,7 @@ export interface BrowserToolsBrokerOptions {
 }
 
 const DEFAULT_BROWSER_TOOLS_TIMEOUT_MS = 15_000;
+const BROWSER_IMPORT_TIMEOUT_MS = 10 * 60 * 1_000;
 
 export class BrowserToolsBroker {
   private readonly defaultTimeoutMs: number;
@@ -176,7 +177,11 @@ export class BrowserToolsBroker {
     return this.sendRequest({
       host: host.value,
       request: request.data,
-      timeoutMs: input.timeoutMs ?? this.defaultTimeoutMs,
+      timeoutMs:
+        input.timeoutMs ??
+        (request.data.command.command === "import_browser_data"
+          ? BROWSER_IMPORT_TIMEOUT_MS
+          : this.defaultTimeoutMs),
     });
   }
 
@@ -302,6 +307,20 @@ export class BrowserToolsBroker {
   ):
     | { ok: true; value: RegisteredBrowserHost }
     | { ok: false; payload: BrowserToolsResponsePayload } {
+    if (command.command === "list_import_sources" || command.command === "import_browser_data") {
+      const host = this.selectMostRecentlyRegisteredHostSupporting(command.command);
+      return host
+        ? { ok: true, value: host }
+        : {
+            ok: false,
+            payload: browserToolsFailure({
+              requestId,
+              code: "browser_unsupported",
+              message: "Browser data import requires an updated Paseo desktop host.",
+            }),
+          };
+    }
+
     if (command.command === "new_tab") {
       const host = this.selectMostRecentlyRegisteredHost();
       return host
@@ -368,6 +387,16 @@ export class BrowserToolsBroker {
     let selected: RegisteredBrowserHost | null = null;
     for (const host of this.clients.values()) {
       selected = host;
+    }
+    return selected;
+  }
+
+  private selectMostRecentlyRegisteredHostSupporting(
+    command: BrowserAutomationCommandName,
+  ): RegisteredBrowserHost | null {
+    let selected: RegisteredBrowserHost | null = null;
+    for (const host of this.clients.values()) {
+      if (host.supportedCommands.has(command)) selected = host;
     }
     return selected;
   }
@@ -455,7 +484,7 @@ export class BrowserToolsBroker {
             requestId: request.requestId,
             code: "browser_timeout",
             message: `Browser automation timed out after ${timeoutMs}ms.`,
-            retryable: true,
+            retryable: request.command.command !== "import_browser_data",
           }),
         );
       }, timeoutMs);
@@ -496,6 +525,8 @@ function getBrowserIdForCommand(command: BrowserAutomationCommand): string | nul
     command.command === "list_profiles" ||
     command.command === "create_profile" ||
     command.command === "delete_profile" ||
+    command.command === "list_import_sources" ||
+    command.command === "import_browser_data" ||
     command.command === "new_tab"
   ) {
     return null;

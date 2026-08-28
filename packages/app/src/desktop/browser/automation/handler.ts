@@ -78,6 +78,7 @@ export function mountBrowserAutomationDaemonClientHandler(
   });
 }
 
+// eslint-disable-next-line complexity -- Command routing keeps every bridge response on one audited boundary.
 async function handleBrowserAutomationRequest(params: {
   client: BrowserAutomationHandlerOptions["client"];
   getHost: () => DesktopHostBridge | null;
@@ -113,6 +114,24 @@ async function handleBrowserAutomationRequest(params: {
       client.sendBrowserAutomationExecuteResponse({
         type: "browser.automation.execute.response",
         payload: normalizeThrownBridgeError(request.requestId, error),
+      });
+    }
+    return;
+  }
+
+  if (
+    request.command.command === "list_import_sources" ||
+    request.command.command === "import_browser_data"
+  ) {
+    try {
+      client.sendBrowserAutomationExecuteResponse({
+        type: "browser.automation.execute.response",
+        payload: await handleBrowserImportRequest({ request, browserHost }),
+      });
+    } catch (error) {
+      client.sendBrowserAutomationExecuteResponse({
+        type: "browser.automation.execute.response",
+        payload: normalizeBrowserImportError(request.requestId, error),
       });
     }
     return;
@@ -280,6 +299,48 @@ async function handleBrowserProfileRequest(params: {
     requestId: request.requestId,
     ok: true,
     result: { command: "delete_profile", profileId: profile.id },
+  };
+}
+
+async function handleBrowserImportRequest(params: {
+  request: BrowserAutomationExecuteRequest;
+  browserHost: DesktopHostBridge["browser"] | undefined;
+}): Promise<BrowserAutomationResponsePayload> {
+  const { request, browserHost } = params;
+  const command = request.command as Extract<
+    BrowserAutomationExecuteRequest["command"],
+    { command: "list_import_sources" | "import_browser_data" }
+  >;
+  if (command.command === "list_import_sources") {
+    if (!browserHost?.listImportSources) {
+      return browserAutomationFailure({
+        requestId: request.requestId,
+        code: "browser_unsupported",
+        message: "Browser data import requires an updated Paseo desktop host.",
+      });
+    }
+    const discovery = await browserHost.listImportSources();
+    return {
+      requestId: request.requestId,
+      ok: true,
+      result: { command: "list_import_sources", ...discovery },
+    };
+  }
+  if (!browserHost?.importBrowserData) {
+    return browserAutomationFailure({
+      requestId: request.requestId,
+      code: "browser_unsupported",
+      message: "Browser data import requires an updated Paseo desktop host.",
+    });
+  }
+  const result = await browserHost.importBrowserData({
+    ...command.args,
+    operationId: request.requestId,
+  });
+  return {
+    requestId: request.requestId,
+    ok: true,
+    result: { command: "import_browser_data", ...result },
   };
 }
 
@@ -580,6 +641,40 @@ function normalizeBridgePayload(
   payload: BrowserAutomationResponsePayload,
 ): BrowserAutomationResponsePayload {
   return { ...payload, requestId } as BrowserAutomationResponsePayload;
+}
+
+function normalizeBrowserImportError(
+  requestId: string,
+  error: unknown,
+): BrowserAutomationFailurePayload {
+  const typed = readTypedBrowserAutomationError(error);
+  if (typed) return browserAutomationFailure({ requestId, ...typed });
+
+  const rawMessage = error instanceof Error ? error.message : "";
+  const message = rawMessage.replace(
+    /^Error invoking remote method 'paseo:browser:(?:import-data|import-sources)': (?:Error: )?/,
+    "",
+  );
+  const safeMessage = [
+    "Browser data import was denied",
+    "Browser data import confirmation timed out",
+    "Browser data import is currently supported",
+    "Browser source profile is not available",
+    "Browser source profile is no longer available",
+    "The complete browser import domain allowlist is too large",
+    "The Default browser session is not empty. Retry with explicit merge confirmation.",
+    "Import is already running",
+    "Invalid browser import",
+    "Invalid import",
+    "Import categories",
+  ].some((prefix) => message.startsWith(prefix))
+    ? message
+    : "Browser data import failed on the desktop host.";
+  return browserAutomationFailure({
+    requestId,
+    code: "browser_unknown_error",
+    message: safeMessage,
+  });
 }
 
 function normalizeThrownBridgeError(
