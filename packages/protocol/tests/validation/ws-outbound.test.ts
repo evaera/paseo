@@ -138,6 +138,56 @@ const SourceSchema = z.object({
     );
   });
 
+  it.each([
+    {
+      name: "success",
+      payload: {
+        requestId: "browser-success",
+        ok: true,
+        result: { command: "list_tabs", tabs: [] },
+      },
+    },
+    {
+      name: "failure",
+      payload: {
+        requestId: "browser-failure",
+        ok: false,
+        error: {
+          code: "browser_no_host",
+          message: "No browser automation host is connected.",
+        },
+      },
+    },
+  ])("accepts a browser command $name response with a boolean ok", ({ payload }) => {
+    const envelope = {
+      type: "session",
+      message: {
+        type: "browser.command.execute.response",
+        payload,
+      },
+    };
+
+    expect(GeneratedWSOutboundMessageSchema.safeParse(envelope)).toMatchObject({
+      success: true,
+      data: envelope,
+    });
+  });
+
+  it("rejects a browser command response without ok", () => {
+    const envelope = {
+      type: "session",
+      message: {
+        type: "browser.command.execute.response",
+        payload: {
+          requestId: "browser-missing-ok",
+          result: { command: "list_tabs", tabs: [] },
+        },
+      },
+    };
+
+    expect(GeneratedWSOutboundMessageSchema.safeParse(envelope).success).toBe(false);
+  });
+
   it("accepts project config responses with and without setup commit status", () => {
     const payload = {
       requestId: "project-config-read",
