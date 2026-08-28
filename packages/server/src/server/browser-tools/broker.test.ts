@@ -94,7 +94,10 @@ describe("BrowserToolsBroker", () => {
       }),
     ).resolves.toMatchObject({
       ok: false,
-      error: { code: "browser_ambiguous_host" },
+      error: {
+        code: "browser_denied",
+        message: "Multiple compatible desktop browser hosts are connected, so none was selected.",
+      },
     });
   });
 

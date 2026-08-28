@@ -369,8 +369,8 @@ export class BrowserToolsBroker {
         ok: false,
         payload: browserToolsFailure({
           requestId,
-          code: "browser_ambiguous_host",
-          message: "Multiple compatible desktop browser hosts are connected.",
+          code: "browser_denied",
+          message: "Multiple compatible desktop browser hosts are connected, so none was selected.",
         }),
       };
     }
