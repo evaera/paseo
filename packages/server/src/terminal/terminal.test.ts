@@ -203,7 +203,7 @@ describe("createTerminal", () => {
     try {
       const env = buildTerminalEnvironment({
         shell: "/bin/sh",
-        env: { PATH: "/custom/bin", PASEO_WORKSPACE_ID: "workspace-1" },
+        env: { PATH: "/custom/bin", BROWSER: "", PASEO_WORKSPACE_ID: "workspace-1" },
         paseoCliBinDir: "/paseo-shim/bin",
         paseoHookCliPath: cli,
       });

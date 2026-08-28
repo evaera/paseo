@@ -52,7 +52,7 @@ describe("browser open wrapper resolution", () => {
     executable(cli);
     executable(wrapper);
 
-    expect(resolveBrowserOpenWrapperPath({ platform: "darwin", cliEntrypoint: cli })).toBe(
+    expect(resolveBrowserOpenWrapperPath({ platform: "darwin", env: {}, cliEntrypoint: cli })).toBe(
       realpathSync(wrapper),
     );
   });
@@ -73,9 +73,9 @@ describe("browser open wrapper resolution", () => {
       "paseo",
     );
 
-    expect(resolveBrowserOpenWrapperPath({ platform: "darwin", cliEntrypoint: entrypoint })).toBe(
-      realpathSync(wrapper),
-    );
+    expect(
+      resolveBrowserOpenWrapperPath({ platform: "darwin", env: {}, cliEntrypoint: entrypoint }),
+    ).toBe(realpathSync(wrapper));
   });
 
   test("realpaths PASEO_CLI and requires both executables", () => {
