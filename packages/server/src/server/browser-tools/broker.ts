@@ -267,6 +267,20 @@ export class BrowserToolsBroker {
   ):
     | { ok: true; value: RegisteredBrowserHost }
     | { ok: false; payload: BrowserToolsResponsePayload } {
+    if (command.command === "list_import_sources" || command.command === "import_browser_data") {
+      const host = this.selectMostRecentlyRegisteredHostSupporting(command.command);
+      return host
+        ? { ok: true, value: host }
+        : {
+            ok: false,
+            payload: browserToolsFailure({
+              requestId,
+              code: "browser_unsupported",
+              message: "Browser data import requires an updated Paseo desktop host.",
+            }),
+          };
+    }
+
     if (command.command === "new_tab") {
       const host = this.selectMostRecentlyRegisteredHost();
       return host
@@ -333,6 +347,16 @@ export class BrowserToolsBroker {
     let selected: RegisteredBrowserHost | null = null;
     for (const host of this.clients.values()) {
       selected = host;
+    }
+    return selected;
+  }
+
+  private selectMostRecentlyRegisteredHostSupporting(
+    command: BrowserAutomationCommandName,
+  ): RegisteredBrowserHost | null {
+    let selected: RegisteredBrowserHost | null = null;
+    for (const host of this.clients.values()) {
+      if (host.supportedCommands.has(command)) selected = host;
     }
     return selected;
   }
@@ -456,7 +480,12 @@ export class BrowserToolsBroker {
 }
 
 function getBrowserIdForCommand(command: BrowserAutomationCommand): string | null {
-  if (command.command === "list_tabs" || command.command === "new_tab") {
+  if (
+    command.command === "list_tabs" ||
+    command.command === "list_import_sources" ||
+    command.command === "import_browser_data" ||
+    command.command === "new_tab"
+  ) {
     return null;
   }
   return command.args.browserId;

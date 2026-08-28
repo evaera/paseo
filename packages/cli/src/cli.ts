@@ -1,5 +1,6 @@
 import { Command, Option } from "commander";
 import { createAgentCommand } from "./commands/agent/index.js";
+import { createBrowserCommand } from "./commands/browser/index.js";
 import { createDaemonCommand } from "./commands/daemon/index.js";
 import { createPermitCommand } from "./commands/permit/index.js";
 import { createProviderCommand } from "./commands/provider/index.js";
@@ -174,7 +175,8 @@ export function createCli(): Command {
 
   // Chat commands
 
-  // Terminal commands
+  // Browser and terminal commands
+  program.addCommand(createBrowserCommand());
   program.addCommand(createTerminalCommand());
 
   // Workspace script commands

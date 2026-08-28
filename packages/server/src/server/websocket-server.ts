@@ -90,7 +90,10 @@ import {
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
-import type { BrowserAutomationExecuteResponse } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type {
+  BrowserAutomationExecuteResponse,
+  BrowserCommandExecuteRequest,
+} from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
   BrowserAutomationHostCapabilitySchema,
   type BrowserAutomationHostCapability,
@@ -1652,6 +1655,8 @@ export class VoiceAssistantWebSocketServer {
         ...(this.workspaceLabelService ? { workspaceLabels: true } : {}),
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
+        // COMPAT(browserDataImport): added in v0.7.0, remove gate after 2027-08-27.
+        browserDataImport: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: true,
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
@@ -2271,6 +2276,51 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
+  // eslint-disable-next-line complexity -- Browser command context fields are independently optional.
+  private async handleBrowserCommandRequest(
+    ws: WebSocketLike,
+    request: BrowserCommandExecuteRequest,
+  ): Promise<void> {
+    const browserToolsEnabled = this.daemonConfigStore.get().browserTools.enabled;
+    const workspace = request.workspaceId
+      ? await this.workspaceRegistry.get(request.workspaceId)
+      : null;
+    const agent = request.agentId ? this.agentManager.getAgent(request.agentId) : null;
+    const invalidContext =
+      (request.workspaceId !== undefined && !workspace) ||
+      (request.cwd !== undefined && workspace?.cwd !== request.cwd) ||
+      (request.agentId !== undefined &&
+        (!agent ||
+          (request.workspaceId !== undefined && agent.workspaceId !== request.workspaceId) ||
+          (request.cwd !== undefined && agent.cwd !== request.cwd)));
+    const payload =
+      browserToolsEnabled && this.browserToolsBroker && !invalidContext
+        ? await this.browserToolsBroker.execute({
+            command: request.command,
+            ...(request.agentId ? { agentId: request.agentId } : {}),
+            ...(request.cwd ? { cwd: request.cwd } : {}),
+            ...(request.workspaceId ? { workspaceId: request.workspaceId } : {}),
+          })
+        : {
+            requestId: request.requestId,
+            ok: false as const,
+            error: {
+              code: invalidContext ? ("browser_denied" as const) : ("browser_disabled" as const),
+              message: invalidContext
+                ? "Browser command context is not owned by this client session."
+                : "Browser tools are disabled on this daemon.",
+              retryable: false,
+            },
+          };
+    this.sendToClient(ws, {
+      type: "session",
+      message: {
+        type: "browser.command.execute.response",
+        payload: { ...payload, requestId: request.requestId },
+      },
+    });
+  }
+
   private async dispatchSessionMessage(
     ws: WebSocketLike,
     activeConnection: SessionConnection,
@@ -2301,6 +2351,13 @@ export class VoiceAssistantWebSocketServer {
       message.message.type === "browser.automation.execute.response"
     ) {
       this.browserToolsBroker?.receiveResponse(message.message as BrowserAutomationExecuteResponse);
+      return;
+    }
+    if (
+      activeConnection.kind === "trusted" &&
+      message.message.type === "browser.command.execute.request"
+    ) {
+      await this.handleBrowserCommandRequest(ws, message.message as BrowserCommandExecuteRequest);
       return;
     }
 
