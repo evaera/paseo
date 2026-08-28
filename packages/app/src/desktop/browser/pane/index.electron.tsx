@@ -10,7 +10,7 @@ import {
   createElement,
 } from "react";
 import { createPortal } from "react-dom";
-import { Modal, Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
@@ -34,6 +34,7 @@ import {
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import * as Clipboard from "expo-clipboard";
+import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -777,106 +778,111 @@ function BrowserImportModal({ visible, onClose }: { visible: boolean; onClose: (
     }
   }, [categories, confirmMerge, domains, sourceBrowserId, sourceProfileId]);
 
+  const header = useMemo<SheetHeader>(() => ({ title: "Import browser data" }), []);
+  const footer = useMemo(
+    () =>
+      result ? (
+        <Button onPress={handleClose}>Done</Button>
+      ) : (
+        <>
+          <Button variant="ghost" onPress={handleClose}>
+            Cancel
+          </Button>
+          <Button
+            disabled={pending || !sourceBrowserId || !sourceProfileId || !domains.trim()}
+            onPress={handleImport}
+          >
+            {pending ? "Importing..." : "Import"}
+          </Button>
+        </>
+      ),
+    [domains, handleClose, handleImport, pending, result, sourceBrowserId, sourceProfileId],
+  );
+
   return (
-    <Modal transparent visible={visible} animationType="fade" onRequestClose={handleClose}>
-      <View style={styles.importModalBackdrop}>
-        <View style={styles.importModalCard}>
-          <Text style={styles.importModalTitle}>Import browser data</Text>
-          {result ? (
-            <View style={styles.importFields}>
-              {(["cookies", "localStorage", "sessionStorage"] as const).map((category) => (
-                <Text key={category} style={styles.importSummary}>
-                  {category}: {result.counts[category].imported} imported,{" "}
-                  {"queued" in result.counts[category]
-                    ? `${result.counts[category].queued} queued, `
-                    : ""}
-                  {result.counts[category].skipped} skipped
-                </Text>
-              ))}
-              {result.warnings.map((warning) => (
-                <Text key={warning} style={styles.importWarning}>
-                  {warning}
-                </Text>
-              ))}
-              <View style={styles.importModalActions}>
-                <Button onPress={handleClose}>Done</Button>
-              </View>
-            </View>
-          ) : (
-            <>
-              <Text style={styles.importWarning}>
-                Only allowlisted cookies and safely readable site storage are considered. History,
-                bookmarks, passwords, autofill, downloads, cache, tabs, and extensions are never
-                read.
-              </Text>
-              <View style={styles.importFields}>
-                <BrowserImportSelect
-                  label="Source browser"
-                  value={sourceBrowserId}
-                  options={sources}
-                  onSelect={handleSelectSource}
-                />
-                <BrowserImportSelect
-                  label="Source profile"
-                  value={sourceProfileId}
-                  options={selectedSource?.profiles ?? []}
-                  onSelect={setSourceProfileId}
-                />
-                <Text style={styles.importWarning}>
-                  Data will be merged into the Default browser session.
-                </Text>
-                <View style={styles.importField}>
-                  <Text style={styles.importLabel}>Allowed domains</Text>
-                  <TextInput
-                    accessibilityLabel="Allowed domains"
-                    initialValue={domains}
-                    onChangeText={setDomains}
-                    placeholder="example.com, app.example.com"
-                    style={styles.importModalInput}
-                  />
-                </View>
-                <View style={styles.importField}>
-                  <Text style={styles.importLabel}>Data categories</Text>
-                  {(["cookies", "localStorage", "sessionStorage"] as const).map((category) => (
-                    <BrowserImportCategoryToggle
-                      key={category}
-                      category={category}
-                      selected={categories.includes(category)}
-                      onToggle={toggleCategory}
-                    />
-                  ))}
-                </View>
-                <Pressable style={styles.importToggle} onPress={toggleMerge}>
-                  <Text style={styles.importToggleMark}>{confirmMerge ? "✓" : ""}</Text>
-                  <Text style={styles.importSelectText}>
-                    Merge into existing Default browser data
-                  </Text>
-                </Pressable>
-              </View>
-              {discoveryWarning ? (
-                <Text style={styles.importWarning}>{discoveryWarning}</Text>
-              ) : null}
-              {error ? (
-                <Text accessibilityRole="alert" style={styles.importModalError}>
-                  {error}
-                </Text>
-              ) : null}
-              <View style={styles.importModalActions}>
-                <Button variant="ghost" onPress={handleClose}>
-                  Cancel
-                </Button>
-                <Button
-                  disabled={pending || !sourceBrowserId || !sourceProfileId || !domains.trim()}
-                  onPress={handleImport}
-                >
-                  {pending ? "Importing..." : "Import"}
-                </Button>
-              </View>
-            </>
-          )}
+    <AdaptiveModalSheet
+      header={header}
+      visible={visible}
+      onClose={handleClose}
+      footer={footer}
+      footerContainerStyle={styles.importModalActions}
+      desktopMaxWidth={520}
+      testID="browser-import-modal"
+    >
+      {result ? (
+        <View style={styles.importFields}>
+          {(["cookies", "localStorage", "sessionStorage"] as const).map((category) => (
+            <Text key={category} style={styles.importSummary}>
+              {category}: {result.counts[category].imported} imported,{" "}
+              {"queued" in result.counts[category]
+                ? `${result.counts[category].queued} queued, `
+                : ""}
+              {result.counts[category].skipped} skipped
+            </Text>
+          ))}
+          {result.warnings.map((warning) => (
+            <Text key={warning} style={styles.importWarning}>
+              {warning}
+            </Text>
+          ))}
         </View>
-      </View>
-    </Modal>
+      ) : (
+        <>
+          <Text style={styles.importWarning}>
+            Only allowlisted cookies and safely readable site storage are considered. History,
+            bookmarks, passwords, autofill, downloads, cache, tabs, and extensions are never read.
+          </Text>
+          <View style={styles.importFields}>
+            <BrowserImportSelect
+              label="Source browser"
+              value={sourceBrowserId}
+              options={sources}
+              onSelect={handleSelectSource}
+            />
+            <BrowserImportSelect
+              label="Source profile"
+              value={sourceProfileId}
+              options={selectedSource?.profiles ?? []}
+              onSelect={setSourceProfileId}
+            />
+            <Text style={styles.importWarning}>
+              Data will be merged into the Default browser session.
+            </Text>
+            <View style={styles.importField}>
+              <Text style={styles.importLabel}>Allowed domains</Text>
+              <TextInput
+                accessibilityLabel="Allowed domains"
+                initialValue={domains}
+                onChangeText={setDomains}
+                placeholder="example.com, app.example.com"
+                style={styles.importModalInput}
+              />
+            </View>
+            <View style={styles.importField}>
+              <Text style={styles.importLabel}>Data categories</Text>
+              {(["cookies", "localStorage", "sessionStorage"] as const).map((category) => (
+                <BrowserImportCategoryToggle
+                  key={category}
+                  category={category}
+                  selected={categories.includes(category)}
+                  onToggle={toggleCategory}
+                />
+              ))}
+            </View>
+            <Pressable style={styles.importToggle} onPress={toggleMerge}>
+              <Text style={styles.importToggleMark}>{confirmMerge ? "✓" : ""}</Text>
+              <Text style={styles.importSelectText}>Merge into existing Default browser data</Text>
+            </Pressable>
+          </View>
+          {discoveryWarning ? <Text style={styles.importWarning}>{discoveryWarning}</Text> : null}
+          {error ? (
+            <Text accessibilityRole="alert" style={styles.importModalError}>
+              {error}
+            </Text>
+          ) : null}
+        </>
+      )}
+    </AdaptiveModalSheet>
   );
 }
 
@@ -2161,28 +2167,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     justifyContent: "flex-end",
     gap: theme.spacing[2],
-  },
-  importModalBackdrop: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: theme.spacing[4],
-  },
-  importModalCard: {
-    width: "100%",
-    maxWidth: 520,
-    maxHeight: "90%",
-    gap: theme.spacing[3],
-    padding: theme.spacing[4],
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface0,
-  },
-  importModalTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.lg,
-    fontWeight: "500",
   },
   importModalInput: {
     minHeight: 40,
