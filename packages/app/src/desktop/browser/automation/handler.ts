@@ -482,7 +482,7 @@ function normalizeBrowserImportError(
 
   const rawMessage = error instanceof Error ? error.message : "";
   const message = rawMessage.replace(
-    /^Error invoking remote method 'paseo:browser:import-data': (?:Error: )?/,
+    /^Error invoking remote method 'paseo:browser:(?:import-data|import-sources)': (?:Error: )?/,
     "",
   );
   const safeMessage = [
@@ -490,6 +490,7 @@ function normalizeBrowserImportError(
     "Browser data import confirmation timed out",
     "Browser data import is currently supported",
     "Browser source profile is not available",
+    "Browser source profile is no longer available",
     "The complete browser import domain allowlist is too large",
     "The Default browser session is not empty. Retry with explicit merge confirmation.",
     "Import is already running",

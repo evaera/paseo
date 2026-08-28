@@ -1111,17 +1111,28 @@ test("keeps browser data imports pending beyond the ordinary command timeout", a
   await ordinaryRejection;
   expect(importSettled).toBe(false);
 
+  await vi.advanceTimersByTimeAsync(9 * 60 * 1_000 - 1);
+  expect(importSettled).toBe(false);
+
   mock.triggerMessage(
     wrapSessionMessage({
       type: "browser.command.execute.response",
       payload: {
         requestId: "req-import",
         ok: false,
-        error: { code: "browser_denied", message: "Denied", retryable: false },
+        error: {
+          code: "browser_timeout",
+          message: "Browser automation timed out after 600000ms.",
+          retryable: false,
+        },
       },
     }),
   );
-  await expect(importResponse).resolves.toMatchObject({ requestId: "req-import", ok: false });
+  await expect(importResponse).resolves.toMatchObject({
+    requestId: "req-import",
+    ok: false,
+    error: { code: "browser_timeout" },
+  });
 });
 
 test("honors explicit fetchAgent timeout below the session RPC default", async () => {

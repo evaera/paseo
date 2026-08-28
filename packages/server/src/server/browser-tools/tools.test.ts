@@ -72,6 +72,10 @@ class BrowserToolHarness {
     return Array.from(this.tools.keys());
   }
 
+  public description(name: string): string | undefined {
+    return this.get(name).config.description;
+  }
+
   private get(name: string): RegisteredTool {
     const tool = this.tools.get(name);
     if (!tool) {
@@ -563,6 +567,14 @@ describe("registerBrowserTools", () => {
       "browser_resize",
       "browser_close_tab",
     ]);
+  });
+
+  test("browser import tool documents the consent allowlist limit", () => {
+    const harness = new BrowserToolHarness();
+
+    expect(harness.description("browser_import_browser_data")).toContain(
+      "fully displayed domain allowlist exceeds 1,000 characters",
+    );
   });
 
   test("browser import tools send transport-neutral commands without secret fields", async () => {

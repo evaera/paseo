@@ -90,6 +90,10 @@ class FakeBrowserBridge {
     return this.response ?? currentListTabsPayload(request.requestId);
   };
 
+  public listImportSources = async (): Promise<never> => {
+    throw this.thrownError ?? new Error("Missing browser import sources test response");
+  };
+
   public importBrowserData = async (): Promise<never> => {
     throw this.thrownError ?? new Error("Missing browser import test response");
   };
@@ -166,6 +170,14 @@ function browserAutomationRequest(): BrowserAutomationExecuteRequest {
     type: "browser.automation.execute.request",
     requestId: "req-1",
     command: { command: "list_tabs", args: {} },
+  };
+}
+
+function browserImportSourcesRequest(): BrowserAutomationExecuteRequest {
+  return {
+    type: "browser.automation.execute.request",
+    requestId: "req-import-sources",
+    command: { command: "list_import_sources", args: {} },
   };
 }
 
@@ -599,25 +611,39 @@ describe("mountBrowserAutomationHandler", () => {
     ]);
   });
 
-  test("unwraps and forwards safe browser import errors from Electron invoke", async () => {
-    const safeMessages = [
-      "The Default browser session is not empty. Retry with explicit merge confirmation.",
-      "Import is already running",
+  test("unwraps and forwards safe browser import errors from fixed Electron channels", async () => {
+    const cases = [
+      {
+        channel: "import-data",
+        request: browserImportRequest(),
+        message:
+          "The Default browser session is not empty. Retry with explicit merge confirmation.",
+      },
+      {
+        channel: "import-data",
+        request: browserImportRequest(),
+        message: "Browser source profile is no longer available",
+      },
+      {
+        channel: "import-sources",
+        request: browserImportSourcesRequest(),
+        message: "Browser data import is currently supported on macOS only",
+      },
     ];
 
-    for (const safeMessage of safeMessages) {
+    for (const testCase of cases) {
       const browser = new BrowserAutomationHandlerHarness();
       browser.browser.thrownError = new Error(
-        `Error invoking remote method 'paseo:browser:import-data': Error: ${safeMessage}`,
+        `Error invoking remote method 'paseo:browser:${testCase.channel}': Error: ${testCase.message}`,
       );
       browser.mount();
-      browser.receive(browserImportRequest());
+      browser.receive(testCase.request);
       await flushAsyncWork();
 
       expect(browser.client.payloadAt(0)).toMatchObject({
-        requestId: "req-import",
+        requestId: testCase.request.requestId,
         ok: false,
-        error: { code: "browser_unknown_error", message: safeMessage },
+        error: { code: "browser_unknown_error", message: testCase.message },
       });
       browser.unmount();
     }

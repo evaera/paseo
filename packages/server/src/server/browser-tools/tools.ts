@@ -88,7 +88,7 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
     {
       title: "Import browser data",
       description:
-        "Import allowlisted cookies and safely readable origin storage into Paseo's Default browser session. History, bookmarks, passwords, autofill, downloads, cache, tabs, and extensions are never inspected.",
+        "Import allowlisted cookies and safely readable origin storage into Paseo's Default browser session. Imports fail closed when the fully displayed domain allowlist exceeds 1,000 characters. History, bookmarks, passwords, autofill, downloads, cache, tabs, and extensions are never inspected.",
       inputSchema: {
         sourceBrowserId: z.string().trim().min(1).max(80),
         sourceProfileId: z.string().trim().min(1).max(160),
