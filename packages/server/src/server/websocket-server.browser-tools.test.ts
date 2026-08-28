@@ -26,6 +26,7 @@ import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 
 interface BrowserToolsDaemonHarness {
   broker: BrowserToolsBroker;
+  wsServer: VoiceAssistantWebSocketServer;
   connectBrowserHostClient(
     options?: ConnectBrowserHostClientOptions,
   ): Promise<BrowserHostClientHandle>;
@@ -112,15 +113,15 @@ describe("WebSocketServer browser tools wiring", () => {
     });
   });
 
-  it("allows only import commands on the trusted client command channel and echoes requestId", async () => {
+  it("allows management commands and denies interaction commands on the trusted client channel", async () => {
     const harness = await startBrowserToolsDaemonHarness();
     const browserHost = await harness.connectBrowserHostClient({
-      capabilities: browserHostCapabilities(["list_import_sources", "import_browser_data"]),
+      capabilities: browserHostCapabilities(["list_tabs", "snapshot"]),
     });
 
     const allowed = browserHost.executeBrowserCommand(
-      { command: "list_import_sources", args: {} },
-      "client-import-request",
+      { command: "list_tabs", args: {} },
+      "client-list-tabs-request",
     );
     const request = await browserHost.nextBrowserRequest();
     browserHost.respondToBrowserRequest({
@@ -128,18 +129,18 @@ describe("WebSocketServer browser tools wiring", () => {
       payload: {
         requestId: request.requestId,
         ok: true,
-        result: { command: "list_import_sources", sources: [], warnings: [] },
+        result: { command: "list_tabs", tabs: [] },
       },
     });
-    await expect(allowed).resolves.toMatchObject({
-      requestId: "client-import-request",
+    await expect(allowed).resolves.toEqual({
+      requestId: "client-list-tabs-request",
       ok: true,
-      result: { command: "list_import_sources" },
+      result: { command: "list_tabs", tabs: [] },
     });
 
     await expect(
       browserHost.executeBrowserCommand(
-        { command: "list_tabs", args: {} },
+        { command: "snapshot", args: { browserId: BROWSER_ID } },
         "client-denied-request",
       ),
     ).resolves.toEqual({
@@ -149,6 +150,51 @@ describe("WebSocketServer browser tools wiring", () => {
         code: "browser_denied",
         message: "This browser command is not available through the client command channel.",
         retryable: false,
+      },
+    });
+  });
+
+  it("immediately denies browser commands from an untrusted hub connection", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const socket = new TestHubSocket();
+    harness.wsServer.beginAcceptingConnections();
+    await harness.wsServer.attachHubSocket(socket, {
+      daemonId: "untrusted-daemon",
+      scopes: [],
+      agents: {
+        create: async () => {
+          throw new Error("unexpected agent creation");
+        },
+        control: async () => {
+          throw new Error("unexpected agent control");
+        },
+        subscribe: () => () => {},
+      },
+    });
+
+    socket.emitMessage({
+      type: "session",
+      message: {
+        type: "browser.command.execute.request",
+        requestId: "untrusted-request",
+        command: { command: "list_tabs", args: {} },
+      },
+    });
+
+    await waitFor(() => socket.sent.length === 1);
+    expect(JSON.parse(socket.sent[0] ?? "")).toEqual({
+      type: "session",
+      message: {
+        type: "browser.command.execute.response",
+        payload: {
+          requestId: "untrusted-request",
+          ok: false,
+          error: {
+            code: "browser_denied",
+            message: "This browser command is not available through the client command channel.",
+            retryable: false,
+          },
+        },
       },
     });
   });
@@ -299,6 +345,7 @@ async function startBrowserToolsDaemonHarness(
 
   const harness: BrowserToolsDaemonHarness = {
     broker,
+    wsServer,
     async connectBrowserHostClient(options = {}) {
       const clientId = options.clientId;
       const client = new DaemonClient({
@@ -487,6 +534,40 @@ function createBrowserRequestQueue(): QueuedBrowserRequests {
       }
     },
   };
+}
+
+class TestHubSocket {
+  readonly bufferedAmount = 0;
+  readonly readyState = 1;
+  readonly sent: string[] = [];
+  private readonly listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+
+  send(data: string, callback?: (error?: Error) => void): void {
+    this.sent.push(data);
+    callback?.();
+  }
+
+  close(): void {
+    this.emit("close");
+  }
+
+  on(event: "message" | "close" | "error", listener: (...args: unknown[]) => void): void {
+    const listeners = this.listeners.get(event) ?? [];
+    listeners.push(listener);
+    this.listeners.set(event, listeners);
+  }
+
+  once(event: "close" | "error", listener: (...args: unknown[]) => void): void {
+    this.on(event, listener);
+  }
+
+  emitMessage(message: unknown): void {
+    this.emit("message", Buffer.from(JSON.stringify(message)));
+  }
+
+  private emit(event: string, ...args: unknown[]): void {
+    for (const listener of this.listeners.get(event) ?? []) listener(...args);
+  }
 }
 
 function createLogger() {

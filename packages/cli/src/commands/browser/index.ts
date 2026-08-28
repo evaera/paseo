@@ -122,7 +122,10 @@ export function createBrowserCommand(): Command {
       .description("Import allowlisted site state into the Default browser session")
       .requiredOption("--source-browser <id>", "Source browser ID from import-sources")
       .requiredOption("--source-profile <id>", "Source profile ID from import-sources")
-      .requiredOption("--domains <domains>", "Comma-separated domain allowlist")
+      .requiredOption(
+        "--domains <domains>",
+        "Comma-separated domain allowlist; fully displayed list must not exceed 1,000 characters",
+      )
       .option(
         "--categories <categories>",
         "Comma-separated cookies,localStorage,sessionStorage",

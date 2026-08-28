@@ -91,6 +91,7 @@ import {
 } from "./lifecycle-reasons.js";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import type {
+  BrowserAutomationCommandName,
   BrowserAutomationExecuteResponse,
   BrowserCommandExecuteRequest,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
@@ -516,6 +517,16 @@ interface ClosePhysicalSocketParams {
   logFields?: Record<string, unknown>;
 }
 
+const BROWSER_CLIENT_MANAGEMENT_COMMANDS = new Set<BrowserAutomationCommandName>([
+  "list_tabs",
+  "new_tab",
+  "list_profiles",
+  "create_profile",
+  "delete_profile",
+  "list_import_sources",
+  "import_browser_data",
+  "open_service_url",
+]);
 const SLOW_REQUEST_THRESHOLD_MS = 500;
 const EXTERNAL_SESSION_DISCONNECT_GRACE_MS = 90_000;
 const HELLO_TIMEOUT_MS = 15_000;
@@ -2336,6 +2347,25 @@ export class VoiceAssistantWebSocketServer {
     ws: WebSocketLike,
     request: BrowserCommandExecuteRequest,
   ): Promise<void> {
+    if (!BROWSER_CLIENT_MANAGEMENT_COMMANDS.has(request.command.command)) {
+      this.sendToClient(ws, {
+        type: "session",
+        message: {
+          type: "browser.command.execute.response",
+          payload: {
+            requestId: request.requestId,
+            ok: false,
+            error: {
+              code: "browser_denied",
+              message: "This browser command is not available through the client command channel.",
+              retryable: false,
+            },
+          },
+        },
+      });
+      return;
+    }
+
     const browserToolsEnabled = this.daemonConfigStore.get().browserTools.enabled;
     const workspace = request.workspaceId
       ? await this.workspaceRegistry.get(request.workspaceId)
@@ -2395,6 +2425,30 @@ export class VoiceAssistantWebSocketServer {
         "ws_control_rpc_received",
       );
     }
+    if (message.message.type === "browser.command.execute.request") {
+      const request = message.message as BrowserCommandExecuteRequest;
+      if (activeConnection.kind !== "trusted") {
+        this.sendToConnection(
+          activeConnection,
+          wrapSessionMessage({
+            type: "browser.command.execute.response",
+            payload: {
+              requestId: request.requestId,
+              ok: false,
+              error: {
+                code: "browser_denied",
+                message:
+                  "This browser command is not available through the client command channel.",
+                retryable: false,
+              },
+            },
+          }),
+        );
+        return;
+      }
+      await this.handleBrowserCommandRequest(ws, request);
+      return;
+    }
     if (activeConnection.kind === "trusted") {
       if (message.message.type === "browser.automation.execute.response") {
         this.browserToolsBroker?.receiveResponse(
@@ -2441,21 +2495,6 @@ export class VoiceAssistantWebSocketServer {
         return;
       }
     }
-    if (
-      activeConnection.kind === "trusted" &&
-      message.message.type === "browser.command.execute.request"
-    ) {
-      await this.handleBrowserCommandRequest(ws, message.message as BrowserCommandExecuteRequest);
-      return;
-    }
-    if (
-      activeConnection.kind === "trusted" &&
-      message.message.type === "browser.command.execute.request"
-    ) {
-      await this.handleBrowserCommandRequest(ws, message.message as BrowserCommandExecuteRequest);
-      return;
-    }
-
     const startMs = performance.now();
     await activeConnection.session.handleMessage(message.message, ws);
     const durationMs = performance.now() - startMs;
