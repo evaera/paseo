@@ -442,7 +442,6 @@ export function removeResidentBrowserWebviewsForProfile(
   payload: unknown,
   browserState: {
     browsersById: Record<string, { browserId: string; profileId: string }>;
-    updateBrowser(browserId: string, patch: { profileId?: string }): void;
   } = useBrowserStore.getState(),
 ): void {
   if (
@@ -454,10 +453,21 @@ export function removeResidentBrowserWebviewsForProfile(
     return;
   }
   for (const record of Object.values(browserState.browsersById)) {
-    if (record.profileId !== payload.profileId) continue;
-    removeResidentBrowserWebview(record.browserId);
-    browserState.updateBrowser(record.browserId, { profileId: "default" });
+    if (record.profileId === payload.profileId) removeResidentBrowserWebview(record.browserId);
   }
+}
+
+export function recoverBrowserFromProfileListFailure(
+  browserId: string,
+  browserState: {
+    browsersById: Record<string, { browserId: string; profileId: string }>;
+    updateBrowser(browserId: string, patch: { profileId?: string }): void;
+  } = useBrowserStore.getState(),
+): void {
+  const record = browserState.browsersById[browserId];
+  if (!record || record.profileId === "default") return;
+  removeResidentBrowserWebview(browserId);
+  browserState.updateBrowser(browserId, { profileId: "default" });
 }
 
 export function removeResidentBrowserWebview(browserId: string): void {

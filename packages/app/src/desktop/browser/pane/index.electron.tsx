@@ -75,6 +75,7 @@ import {
   presentBrowserWebview,
   rememberBrowserWebviewSize,
   releaseResidentBrowserWebview,
+  recoverBrowserFromProfileListFailure,
   removeResidentBrowserWebview,
   takeResidentBrowserWebview,
 } from "../resident-webviews";
@@ -752,11 +753,7 @@ export function BrowserPane({
       browserState.normalizeBrowserProfiles(profileIds);
       setProfiles(next);
     } catch (error) {
-      const browserState = useBrowserStore.getState();
-      for (const record of Object.values(browserState.browsersById)) {
-        if (record.profileId !== "default") removeResidentBrowserWebview(record.browserId);
-      }
-      browserState.normalizeBrowserProfiles(new Set(["default"]));
+      recoverBrowserFromProfileListFailure(browserIdRef.current);
       setProfiles([
         {
           id: "default",

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -168,6 +168,33 @@ describe("BrowserProfilesStore", () => {
     expect(await store.list()).toMatchObject([{ id: "default", name: "Default" }]);
     const files = await readdir(userDataPath);
     expect(files.some((file) => file.startsWith("browser-profiles.json.corrupt."))).toBe(true);
+  });
+
+  test("does not cache repaired metadata when the corrupt backup cannot be created", async () => {
+    const userDataPath = await tempDirectory();
+    const filePath = path.join(userDataPath, "browser-profiles.json");
+    const id = "123e4567-e89b-42d3-a456-426614174000";
+    await writeFile(filePath, "not json");
+    const store = createBrowserProfilesStore({
+      userDataPath,
+      renameFile: async (source, destination) => {
+        if (destination.toString().includes(".corrupt.")) {
+          throw new Error("backup failed");
+        }
+        await rename(source, destination);
+      },
+    });
+
+    await expect(store.list()).rejects.toThrow("backup failed");
+    await writeFile(
+      filePath,
+      JSON.stringify({ version: 1, profiles: [{ id, name: "Recovered", createdAt: 42 }] }),
+    );
+
+    await expect(store.list()).resolves.toMatchObject([
+      { id: "default", name: "Default" },
+      { id, name: "Recovered", createdAt: 42 },
+    ]);
   });
 
   test("salvages valid profiles and backs up a partially corrupt document", async () => {

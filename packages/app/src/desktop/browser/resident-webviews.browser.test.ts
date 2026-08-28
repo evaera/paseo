@@ -7,6 +7,7 @@ import {
   getResidentBrowserWebview,
   prepareBrowserWebview,
   presentBrowserWebview,
+  recoverBrowserFromProfileListFailure,
   rememberBrowserWebviewSize,
   releaseResidentBrowserWebview,
   removeResidentBrowserWebview,
@@ -27,6 +28,10 @@ const attachedBrowsers: Array<{
 }> = [];
 const profileHost: BrowserWebviewProfileHost = {
   profilePartition: "persist:paseo-browser",
+  profilePartitionFor: (profileId) =>
+    profileId === "default"
+      ? "persist:paseo-browser"
+      : `persist:paseo-browser-profile-${profileId}`,
   registerAttachedBrowser: async (input) => {
     attachedBrowsers.push(input);
   },
@@ -103,31 +108,86 @@ describe("resident browser webviews", () => {
     clearResidentBrowserWebviewsForTests();
   });
 
-  it("drains retained guests for a deleting profile without a mounted pane", () => {
+  it("drains retained guests before deletion without changing persistent assignments", () => {
     const browserId = "11111111-1111-4111-8111-111111111111";
+    const record = { browserId, profileId: "profile-1" };
     const webview = ensureResidentBrowserWebview({
       browserId,
       workspaceId: "workspace-1",
-      profileId: "profile-1",
+      profileId: record.profileId,
       url: "https://example.com",
       profileHost,
     });
-    const updates: Array<{ browserId: string; profileId: string }> = [];
 
     removeResidentBrowserWebviewsForProfile(
       { profileId: "profile-1" },
-      {
-        browsersById: {
-          [browserId]: { browserId, profileId: "profile-1" },
-        },
-        updateBrowser: (updatedBrowserId, patch) => {
-          updates.push({ browserId: updatedBrowserId, profileId: patch.profileId ?? "" });
-        },
-      },
+      { browsersById: { [browserId]: record } },
     );
 
     expect(webview?.isConnected).toBe(false);
-    expect(updates).toEqual([{ browserId, profileId: "default" }]);
+    expect(record.profileId).toBe("profile-1");
+  });
+
+  it("preserves a profile assignment and recreates its tab after delete preflight fails", () => {
+    const browserId = "11111111-1111-4111-8111-111111111112";
+    const record = { browserId, profileId: "profile-1" };
+    const firstWebview = ensureResidentBrowserWebview({
+      browserId,
+      workspaceId: "workspace-1",
+      profileId: record.profileId,
+      url: "https://example.com",
+      profileHost,
+    });
+
+    removeResidentBrowserWebviewsForProfile(
+      { profileId: "profile-1" },
+      { browsersById: { [browserId]: record } },
+    );
+    const recreatedWebview = ensureResidentBrowserWebview({
+      browserId,
+      workspaceId: "workspace-1",
+      profileId: record.profileId,
+      url: "https://example.com",
+      profileHost,
+    });
+
+    expect(firstWebview?.isConnected).toBe(false);
+    expect(record.profileId).toBe("profile-1");
+    expect(recreatedWebview).not.toBe(firstWebview);
+    expect(recreatedWebview?.getAttribute("partition")).toBe(
+      "persist:paseo-browser-profile-profile-1",
+    );
+  });
+
+  it("recovers only the affected browser when profile listing fails", () => {
+    const affectedId = "11111111-1111-4111-8111-111111111113";
+    const unaffectedId = "11111111-1111-4111-8111-111111111114";
+    const affectedWebview = ensureTestBrowser({
+      browserId: affectedId,
+      workspaceId: "workspace-1",
+      url: "https://example.com/affected",
+    });
+    const unaffectedWebview = ensureTestBrowser({
+      browserId: unaffectedId,
+      workspaceId: "workspace-1",
+      url: "https://example.com/unaffected",
+    });
+    const records = {
+      [affectedId]: { browserId: affectedId, profileId: "profile-1" },
+      [unaffectedId]: { browserId: unaffectedId, profileId: "profile-2" },
+    };
+
+    recoverBrowserFromProfileListFailure(affectedId, {
+      browsersById: records,
+      updateBrowser: (browserId, patch) => {
+        records[browserId as keyof typeof records].profileId = patch.profileId ?? "default";
+      },
+    });
+
+    expect(records[affectedId].profileId).toBe("default");
+    expect(records[unaffectedId].profileId).toBe("profile-2");
+    expect(affectedWebview?.isConnected).toBe(false);
+    expect(unaffectedWebview?.isConnected).toBe(true);
   });
 
   it("parks a browser webview in the permanent paintable 1x1 host", () => {

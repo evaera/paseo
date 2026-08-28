@@ -122,8 +122,10 @@ export function createBrowserProfilesStore(input: {
   removePartitionData?: (profileId: string) => Promise<void>;
   createId?: () => string;
   now?: () => number;
+  renameFile?: typeof rename;
 }): BrowserProfilesStore {
   const filePath = path.join(input.userDataPath, BROWSER_PROFILES_FILENAME);
+  const renameFile = input.renameFile ?? rename;
   let cached: StoredDocument | null = null;
   let operationQueue: Promise<unknown> = Promise.resolve();
 
@@ -137,7 +139,7 @@ export function createBrowserProfilesStore(input: {
     await mkdir(input.userDataPath, { recursive: true });
     const temporaryPath = `${filePath}.tmp.${process.pid}.${randomUUID()}`;
     await writeFile(temporaryPath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
-    await rename(temporaryPath, filePath);
+    await renameFile(temporaryPath, filePath);
     cached = document;
   }
 
@@ -158,13 +160,14 @@ export function createBrowserProfilesStore(input: {
     } catch {
       normalized = { document: { version: 1, profiles: [] }, repaired: true };
     }
-    cached = normalized.document;
     if (normalized.repaired) {
       const backupPath = `${filePath}.corrupt.${Date.now()}`;
-      await rename(filePath, backupPath);
-      await persist(cached);
+      await renameFile(filePath, backupPath);
+      await persist(normalized.document);
+    } else {
+      cached = normalized.document;
     }
-    return cached;
+    return normalized.document;
   }
 
   return {
