@@ -28,7 +28,7 @@ export interface BrowserToolsExecuteInput {
 interface PendingBrowserToolsRequest {
   clientId: string;
   rememberAffinity: boolean;
-  timeout: ReturnType<typeof setTimeout>;
+  timeout: ReturnType<typeof setTimeout> | null;
   resolve: (payload: BrowserToolsResponsePayload) => void;
 }
 
@@ -45,6 +45,8 @@ export interface BrowserToolsBrokerOptions {
 
 const DEFAULT_BROWSER_TOOLS_TIMEOUT_MS = 15_000;
 const BROWSER_IMPORT_TIMEOUT_MS = 10 * 60 * 1_000;
+const DEFAULT_SERVICE_URL_DISPATCH_TIMEOUT_MS = 2_000;
+const DEFAULT_SERVICE_URL_RESULT_TIMEOUT_MS = 5 * 60_000;
 
 export class BrowserToolsBroker {
   private readonly defaultTimeoutMs: number;
@@ -91,7 +93,7 @@ export class BrowserToolsBroker {
         continue;
       }
       this.pending.delete(requestId);
-      clearTimeout(pending.timeout);
+      if (pending.timeout) clearTimeout(pending.timeout);
       pending.resolve(
         browserToolsFailure({
           requestId,
@@ -129,6 +131,10 @@ export class BrowserToolsBroker {
         code: "browser_unknown_error",
         message: formatBrowserAutomationValidationError(request.error.issues[0]?.message),
       });
+    }
+
+    if (request.data.command.command === "open_service_url") {
+      return this.executeServiceUrl(request.data, input.timeoutMs);
     }
 
     if (request.data.command.command === "list_tabs") {
@@ -185,6 +191,26 @@ export class BrowserToolsBroker {
     });
   }
 
+  private executeServiceUrl(
+    request: BrowserAutomationExecuteRequest,
+    timeoutMs: number | undefined,
+  ): Promise<BrowserToolsResponsePayload> {
+    const command = request.command as Extract<
+      BrowserAutomationCommand,
+      { command: "open_service_url" }
+    >;
+    command.args.url = new URL(command.args.url).href;
+    const host = this.selectServiceUrlHost(request.requestId);
+    if (!host.ok) return Promise.resolve(host.payload);
+    return this.sendRequest({
+      host: host.value,
+      request,
+      timeoutMs: command.args.waitForResult
+        ? DEFAULT_SERVICE_URL_RESULT_TIMEOUT_MS
+        : (timeoutMs ?? DEFAULT_SERVICE_URL_DISPATCH_TIMEOUT_MS),
+    });
+  }
+
   public receiveResponse(response: BrowserAutomationExecuteResponse): boolean {
     const parsed = BrowserAutomationExecuteResponseSchema.safeParse(response);
     if (!parsed.success) {
@@ -199,7 +225,7 @@ export class BrowserToolsBroker {
       }
 
       this.pending.delete(requestId);
-      clearTimeout(pending.timeout);
+      if (pending.timeout) clearTimeout(pending.timeout);
       pending.resolve(
         browserToolsFailure({
           requestId,
@@ -216,7 +242,7 @@ export class BrowserToolsBroker {
     }
 
     this.pending.delete(parsed.data.payload.requestId);
-    clearTimeout(pending.timeout);
+    if (pending.timeout) clearTimeout(pending.timeout);
     if (pending.rememberAffinity) {
       this.rememberBrowserHostForPayload(pending.clientId, parsed.data.payload);
     }
@@ -383,6 +409,36 @@ export class BrowserToolsBroker {
     };
   }
 
+  private selectServiceUrlHost(
+    requestId: string,
+  ):
+    | { ok: true; value: RegisteredBrowserHost }
+    | { ok: false; payload: BrowserToolsResponsePayload } {
+    const compatible = Array.from(this.clients.values()).filter((host) =>
+      host.supportedCommands.has("open_service_url"),
+    );
+    if (compatible.length === 1) return { ok: true, value: compatible[0] };
+    if (compatible.length > 1) {
+      return {
+        ok: false,
+        payload: browserToolsFailure({
+          requestId,
+          code: "browser_denied",
+          message: "Multiple compatible desktop browser hosts are connected, so none was selected.",
+        }),
+      };
+    }
+    return {
+      ok: false,
+      payload: browserToolsFailure({
+        requestId,
+        code: "browser_no_host",
+        message: "No compatible desktop browser host is connected.",
+        retryable: true,
+      }),
+    };
+  }
+
   private selectMostRecentlyRegisteredHost(): RegisteredBrowserHost | null {
     let selected: RegisteredBrowserHost | null = null;
     for (const host of this.clients.values()) {
@@ -459,7 +515,7 @@ export class BrowserToolsBroker {
       return;
     }
 
-    if ("browserId" in payload.result) {
+    if ("browserId" in payload.result && payload.result.browserId) {
       this.browserHostByBrowserId.set(payload.result.browserId, clientId);
       this.strandedBrowserHostByBrowserId.delete(payload.result.browserId);
     }
@@ -469,25 +525,26 @@ export class BrowserToolsBroker {
     host: RegisteredBrowserHost;
     request: BrowserAutomationExecuteRequest;
     rememberAffinity?: boolean;
-    timeoutMs: number;
+    timeoutMs: number | null;
   }): Promise<BrowserToolsResponsePayload> {
     const { host, request, timeoutMs } = params;
     const client = host.client;
 
     return new Promise<BrowserToolsResponsePayload>((resolve) => {
-      const timeout = setTimeout(() => {
-        if (!this.pending.delete(request.requestId)) {
-          return;
-        }
-        resolve(
-          browserToolsFailure({
-            requestId: request.requestId,
-            code: "browser_timeout",
-            message: `Browser automation timed out after ${timeoutMs}ms.`,
-            retryable: request.command.command !== "import_browser_data",
-          }),
-        );
-      }, timeoutMs);
+      const timeout =
+        timeoutMs === null
+          ? null
+          : setTimeout(() => {
+              if (!this.pending.delete(request.requestId)) return;
+              resolve(
+                browserToolsFailure({
+                  requestId: request.requestId,
+                  code: "browser_timeout",
+                  message: `Browser automation timed out after ${timeoutMs}ms.`,
+                  retryable: request.command.command !== "import_browser_data",
+                }),
+              );
+            }, timeoutMs);
 
       this.pending.set(request.requestId, {
         clientId: client.id,
@@ -527,7 +584,8 @@ function getBrowserIdForCommand(command: BrowserAutomationCommand): string | nul
     command.command === "delete_profile" ||
     command.command === "list_import_sources" ||
     command.command === "import_browser_data" ||
-    command.command === "new_tab"
+    command.command === "new_tab" ||
+    command.command === "open_service_url"
   ) {
     return null;
   }
@@ -549,14 +607,14 @@ function withBrowserToolsRequestId(
 function resolveSendFailure(params: {
   requestId: string;
   pending: Map<string, PendingBrowserToolsRequest>;
-  timeout: ReturnType<typeof setTimeout>;
+  timeout: ReturnType<typeof setTimeout> | null;
   resolve: (payload: BrowserToolsResponsePayload) => void;
   error: unknown;
 }): void {
   if (!params.pending.delete(params.requestId)) {
     return;
   }
-  clearTimeout(params.timeout);
+  if (params.timeout) clearTimeout(params.timeout);
   params.resolve(
     browserToolsFailure({
       requestId: params.requestId,

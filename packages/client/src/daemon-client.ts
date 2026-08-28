@@ -158,8 +158,10 @@ import {
 } from "./compat/normalize-provider-models.js";
 import { TerminalStreamRouter, type TerminalStreamEvent } from "./terminal-stream-router.js";
 import type {
+  BrowserAutomationCommand,
   BrowserAutomationExecuteRequest,
   BrowserAutomationExecuteResponse,
+  BrowserCommandExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
   WorkspaceLayoutExecuteRequestSchema,
@@ -4795,7 +4797,13 @@ export class DaemonClient {
 
   async executeBrowserCommand(
     command: BrowserAutomationCommand,
-    options?: { workspaceId?: string; cwd?: string; agentId?: string; requestId?: string },
+    options?: {
+      workspaceId?: string;
+      cwd?: string;
+      agentId?: string;
+      requestId?: string;
+      timeoutMs?: number;
+    },
   ): Promise<BrowserCommandExecuteResponse["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId: options?.requestId,
@@ -4807,7 +4815,11 @@ export class DaemonClient {
         ...(options?.agentId ? { agentId: options.agentId } : {}),
       },
       responseType: "browser.command.execute.response",
-      ...(command.command === "import_browser_data" ? { timeout: 10 * 60 * 1_000 + 1_000 } : {}),
+      ...(options?.timeoutMs !== undefined
+        ? { timeout: options.timeoutMs }
+        : command.command === "import_browser_data"
+          ? { timeout: 10 * 60 * 1_000 + 1_000 }
+          : {})
     });
   }
 

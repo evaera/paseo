@@ -32,8 +32,14 @@ export interface RegisterBrowserToolsOptions {
 
 const HTTP_URL_ONLY_MESSAGE = "URL must use http/https only";
 const WORKSPACE_CONTEXT_MESSAGE =
-  "This browser tool needs a workspace. Start the agent from a Paseo workspace before calling browser_new_tab or browser_list_tabs.";
+  "This browser tool needs a workspace. Start the agent from a Paseo workspace before calling workspace-scoped browser tools, including browser_open_service_url.";
 const URL_WHITESPACE_PATTERN = /\s/;
+function hasUrlControlOrWhitespace(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 32 || code === 127;
+  });
+}
 const NON_HTTP_EXPLICIT_SCHEME_PATTERN = /^(?!https?:\/\/)[a-z][a-z0-9+.-]*:\/\//i;
 
 const BrowserHttpUrlInputSchema = z
@@ -50,6 +56,14 @@ const BrowserHttpUrlInputSchema = z
     }
     return normalized;
   });
+const ServiceHttpUrlInputSchema = z.string().transform((value, context) => {
+  const canonical = canonicalServiceHttpUrl(value);
+  if (!canonical) {
+    context.addIssue({ code: "custom", message: HTTP_URL_ONLY_MESSAGE });
+    return z.NEVER;
+  }
+  return canonical;
+});
 const BrowserRefInputSchema = z.string().regex(/^@e\d+$/);
 const BrowserClickButtonInputSchema = z.enum(["left", "right", "middle"]);
 const BrowserClickModifierInputSchema = z.enum(["Alt", "Control", "Meta", "Shift"]);
@@ -233,6 +247,32 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
             ...(profile ? { profile } : {}),
           },
         },
+      });
+      return browserToolResult({ payload, context });
+    },
+  );
+
+  options.registerTool(
+    "browser_open_service_url",
+    {
+      title: "Open service URL",
+      description:
+        "Open an HTTP(S) service URL using the Paseo desktop Service URLs setting. The setting may open a focused Paseo browser tab, use the system browser, or ask the user.",
+      inputSchema: {
+        url: ServiceHttpUrlInputSchema,
+      },
+    },
+    async ({ url }) => {
+      const context = resolveBrowserToolContext(options);
+      const missingWorkspace = requireWorkspaceContext(context);
+      if (missingWorkspace) {
+        return missingWorkspace;
+      }
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
+        command: { command: "open_service_url", args: { url, waitForResult: true } },
       });
       return browserToolResult({ payload, context });
     },
@@ -863,6 +903,16 @@ function isValidHttpUrl(value: string): boolean {
   }
 }
 
+function canonicalServiceHttpUrl(value: string): string | null {
+  if (hasUrlControlOrWhitespace(value)) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 function requireWorkspaceContext(context: {
   agentId?: string;
   cwd?: string;
@@ -986,6 +1036,9 @@ function summarizeBrowserSuccess(
     return withDialogs(mediaSummary);
   }
 
+  const serviceUrlSummary = summarizeServiceUrlSuccess(payload.result);
+  if (serviceUrlSummary) return serviceUrlSummary;
+
   if (payload.result.command === "list_tabs") {
     const count = payload.result.tabs.length;
     if (count === 0) {
@@ -1036,6 +1089,21 @@ function summarizeBrowserSuccess(
   }
 
   return withDialogs(`Browser ${payload.result.command} complete.`);
+}
+
+function summarizeServiceUrlSuccess(
+  result: Extract<BrowserToolsResponsePayload, { ok: true }>["result"],
+): string | null {
+  if (result.command !== "open_service_url") return null;
+  if (result.disposition === "accepted") {
+    return "Accepted service URL for desktop policy routing.";
+  }
+  if (result.disposition === "dismissed") {
+    return "Dismissed service URL without opening it.";
+  }
+  return result.disposition === "in-app" && result.browserId
+    ? `Opened service URL in Paseo browser tab browserId=${result.browserId}.`
+    : "Opened service URL in the system browser.";
 }
 
 function appendDialogSummary(

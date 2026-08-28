@@ -3345,7 +3345,9 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(browserCommandRpc): added in v0.7.0, remove gate after 2027-08-27.
         browserCommandRpc: z.boolean().optional(),
         // COMPAT(browserDataImport): added in v0.7.0, remove gate after 2027-08-27.
-        browserDataImport: z.boolean().optional()
+        browserDataImport: z.boolean().optional(),
+        // COMPAT(serviceUrlOpenPolicyRpc): added in v0.7.0, remove gate after 2027-08-28.
+        serviceUrlOpenPolicyRpc: z.boolean().optional()
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.

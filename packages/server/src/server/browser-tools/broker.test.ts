@@ -112,6 +112,124 @@ describe("BrowserToolsBroker", () => {
     expect(client.receivedRequests).toEqual([]);
   });
 
+  test("service URL routing rejects ambiguous compatible hosts", async () => {
+    const broker = createBroker();
+    broker.registerClient(new FakeBrowserHostClient("host-1"));
+    broker.registerClient(new FakeBrowserHostClient("host-2"));
+
+    await expect(
+      broker.execute({
+        command: {
+          command: "open_service_url",
+          args: { url: "https://service.localhost", waitForResult: false },
+        },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "browser_denied",
+        message: "Multiple compatible desktop browser hosts are connected, so none was selected.",
+      },
+    });
+  });
+
+  test("service URL routing selects the only compatible host and canonicalizes the URL", async () => {
+    const broker = createBroker();
+    const incompatible = new FakeBrowserHostClient("host-old", {
+      supportedCommands: ["list_tabs"],
+    });
+    const compatible = new FakeBrowserHostClient("host-new");
+    broker.registerClient(incompatible);
+    broker.registerClient(compatible);
+
+    const result = broker.execute({
+      command: {
+        command: "open_service_url",
+        args: { url: "HTTPS://SERVICE.localhost:443/a/../", waitForResult: false },
+      },
+    });
+    expect(incompatible.receivedRequests).toEqual([]);
+    expect(compatible.receivedRequests[0]?.command).toEqual({
+      command: "open_service_url",
+      args: { url: "https://service.localhost/", waitForResult: false },
+    });
+    compatible.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "open_service_url",
+        url: "https://service.localhost/",
+        disposition: "accepted",
+      },
+    });
+    await expect(result).resolves.toMatchObject({
+      ok: true,
+      result: { disposition: "accepted" },
+    });
+  });
+
+  test("waited service URL routing has no generic dialog timeout", async () => {
+    vi.useFakeTimers();
+    const broker = createBroker();
+    const host = new FakeBrowserHostClient("host-1");
+    broker.registerClient(host);
+    const result = broker.execute({
+      command: {
+        command: "open_service_url",
+        args: { url: "https://service.localhost", waitForResult: true },
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(broker.getPendingRequestCount()).toBe(1);
+    host.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "open_service_url",
+        url: "https://service.localhost/",
+        disposition: "external",
+      },
+    });
+    await expect(result).resolves.toMatchObject({
+      ok: true,
+      result: { disposition: "external" },
+    });
+  });
+
+  test("waited service URL routing is bounded to five minutes", async () => {
+    vi.useFakeTimers();
+    const broker = createBroker();
+    broker.registerClient(new FakeBrowserHostClient("host-1"));
+    const result = broker.execute({
+      command: {
+        command: "open_service_url",
+        args: { url: "https://service.localhost", waitForResult: true },
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    await expect(result).resolves.toMatchObject({
+      ok: false,
+      error: { code: "browser_timeout", retryable: true },
+    });
+  });
+
+  test("service URL routing fails when no compatible host is available", async () => {
+    const broker = createBroker();
+    broker.registerClient(
+      new FakeBrowserHostClient("host-old", { supportedCommands: ["list_tabs"] }),
+    );
+    await expect(
+      broker.execute({
+        command: {
+          command: "open_service_url",
+          args: { url: "https://service.localhost", waitForResult: false },
+        },
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "browser_no_host" } });
+  });
+
   test("no connected browser host returns a retryable browser_no_host error", async () => {
     const broker = createBroker();
 

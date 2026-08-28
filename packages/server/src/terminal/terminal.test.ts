@@ -23,8 +23,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
+
 import * as pty from "node-pty";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
 import { stripVTControlCharacters } from "node:util";
@@ -185,6 +186,40 @@ async function waitForScheduledTimers(expectedTimerCount: number): Promise<void>
 }
 
 describe("createTerminal", () => {
+  it("keeps the intended paseo shim ahead of the dedicated open wrapper", () => {
+    const previousCli = process.env.PASEO_CLI;
+    const root = mkdtempSync(join(tmpdir(), "terminal-browser-routing-"));
+    temporaryDirs.push(root);
+    const cli = join(root, "Resources", "bin", "paseo");
+    const wrapper = join(root, "Resources", "open-wrapper", "open");
+    mkdirSync(join(root, "Resources", "bin"), { recursive: true });
+    mkdirSync(join(root, "Resources", "open-wrapper"), { recursive: true });
+    writeFileSync(cli, "#!/bin/sh\n");
+    writeFileSync(wrapper, "#!/bin/sh\n");
+    chmodSync(cli, 0o755);
+    chmodSync(wrapper, 0o755);
+    process.env.PASEO_CLI = cli;
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    try {
+      const env = buildTerminalEnvironment({
+        shell: "/bin/sh",
+        env: { PATH: "/custom/bin", BROWSER: "", PASEO_WORKSPACE_ID: "workspace-1" },
+        paseoCliBinDir: "/paseo-shim/bin",
+        paseoHookCliPath: cli,
+      });
+      expect(env.PATH?.split(":").slice(0, 3)).toEqual([
+        "/paseo-shim/bin",
+        dirname(realpathSync(wrapper)),
+        "/custom/bin",
+      ]);
+      expect(env.BROWSER).toBe(realpathSync(wrapper));
+    } finally {
+      platform.mockRestore();
+      if (previousCli === undefined) delete process.env.PASEO_CLI;
+      else process.env.PASEO_CLI = previousCli;
+    }
+  });
+
   it("keeps full process titles while stripping path prefixes", () => {
     expect(normalizeProcessTitle("   /usr/local/bin/npm   run   dev   ")).toBe("npm run dev");
     expect(normalizeProcessTitle("/opt/homebrew/bin/node /tmp/work/npm-cli.js run dev")).toBe(

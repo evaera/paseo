@@ -37,10 +37,12 @@ export interface DesktopDialogOpenOptions {
 export interface DesktopDialogAskWithCheckboxOptions extends DesktopDialogAskOptions {
   checkboxLabel: string;
   checkboxChecked?: boolean;
+  dismissLabel?: string;
 }
 
 export interface DesktopDialogAskWithCheckboxResult {
   confirmed: boolean;
+  dismissed: boolean;
   dontAskAgain: boolean;
 }
 

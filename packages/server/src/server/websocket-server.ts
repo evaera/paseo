@@ -99,6 +99,7 @@ import {
   type BrowserAutomationHostCapability,
 } from "@getpaseo/protocol/browser-automation/capabilities";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
+import { hasInvalidBrowserCommandContext } from "./browser-command-context.js";
 import type { WorkspaceLayoutBroker } from "./workspace-layout/broker.js";
 import type { WorkspaceLayoutExecuteResponse } from "@getpaseo/protocol/workspace-layout/rpc-schemas";
 import {
@@ -1693,6 +1694,8 @@ export class VoiceAssistantWebSocketServer {
         ...(this.workspaceLayoutBroker ? { workspaceLayouts: true } : {}),
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
+        // COMPAT(browserCommandRpc): added in v0.7.0, remove gate after 2027-08-27.
+        browserCommandRpc: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: true,
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
@@ -1729,6 +1732,8 @@ export class VoiceAssistantWebSocketServer {
         browserCommandRpc: true,
         // COMPAT(browserDataImport): added in v0.7.0, remove gate after 2027-08-27.
         browserDataImport: true,
+        // COMPAT(serviceUrlOpenPolicyRpc): added in v0.7.0, remove gate after 2027-08-28.
+        serviceUrlOpenPolicyRpc: true
         pluginManagement: true,
         pluginGitManagement: true,
         pluginLogs: true,
@@ -2352,11 +2357,7 @@ export class VoiceAssistantWebSocketServer {
       ? await this.workspaceRegistry.get(request.workspaceId)
       : null;
     const agent = request.agentId ? this.agentManager.getAgent(request.agentId) : null;
-    const invalidContext = hasInvalidBrowserCommandContext({
-      request,
-      workspace,
-      agent,
-    });
+    const invalidContext = hasInvalidBrowserCommandContext({ request, workspace, agent });
     const payload =
       browserToolsEnabled && this.browserToolsBroker && !invalidContext
         ? await this.browserToolsBroker.execute({
@@ -2455,6 +2456,13 @@ export class VoiceAssistantWebSocketServer {
         );
         return;
       }
+    }
+    if (
+      activeConnection.kind === "trusted" &&
+      message.message.type === "browser.command.execute.request"
+    ) {
+      await this.handleBrowserCommandRequest(ws, message.message as BrowserCommandExecuteRequest);
+      return;
     }
     if (
       activeConnection.kind === "trusted" &&

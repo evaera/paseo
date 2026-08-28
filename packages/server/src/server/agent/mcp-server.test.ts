@@ -1093,7 +1093,7 @@ describe("browser MCP tools", () => {
     expect(response.content).toEqual([
       {
         type: "text",
-        text: "This browser tool needs a workspace. Start the agent from a Paseo workspace before calling browser_new_tab or browser_list_tabs.",
+        text: "This browser tool needs a workspace. Start the agent from a Paseo workspace before calling workspace-scoped browser tools, including browser_open_service_url.",
       },
     ]);
     expect(response.structuredContent).toEqual({
@@ -1101,7 +1101,7 @@ describe("browser MCP tools", () => {
       error: {
         code: "browser_denied",
         message:
-          "This browser tool needs a workspace. Start the agent from a Paseo workspace before calling browser_new_tab or browser_list_tabs.",
+          "This browser tool needs a workspace. Start the agent from a Paseo workspace before calling workspace-scoped browser tools, including browser_open_service_url.",
         retryable: false,
       },
       context: { agentId: "agent-1", cwd: REPO_CWD },

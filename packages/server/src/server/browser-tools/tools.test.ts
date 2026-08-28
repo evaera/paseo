@@ -15,7 +15,7 @@ const BROWSER_ID_MESSAGE =
 const WAIT_CONDITION_MESSAGE = "browser_wait requires exactly one of text or url";
 const HTTP_URL_MESSAGE = "URL must use http/https only";
 const WORKSPACE_CONTEXT_MESSAGE =
-  "This browser tool needs a workspace. Start the agent from a Paseo workspace before calling browser_new_tab or browser_list_tabs.";
+  "This browser tool needs a workspace. Start the agent from a Paseo workspace before calling workspace-scoped browser tools, including browser_open_service_url.";
 
 interface RegisteredTool {
   config: PaseoToolConfig;
@@ -553,6 +553,7 @@ describe("registerBrowserTools", () => {
       "browser_import_browser_data",
       "browser_list_tabs",
       "browser_new_tab",
+      "browser_open_service_url",
       "browser_snapshot",
       "browser_click",
       "browser_fill",
@@ -683,6 +684,76 @@ describe("registerBrowserTools", () => {
         type: "text",
         text: `Created browser tab browserId=${BROWSER_ID} url=https://example.com. Use this browserId for tab-scoped browser tools.`,
       },
+    ]);
+  });
+
+  test("service URL tool sends the policy command with workspace context", async () => {
+    const harness = new BrowserToolHarness();
+    harness.broker.setResponse({
+      requestId: "req-service-url",
+      ok: true,
+      result: {
+        command: "open_service_url",
+        url: "https://service.localhost/",
+        disposition: "external",
+      },
+    });
+
+    const response = await harness.execute("browser_open_service_url", {
+      url: "https://service.localhost",
+    });
+
+    expect(harness.broker.calls).toEqual([
+      {
+        agentId: "agent-1",
+        cwd: "/repo",
+        workspaceId: "wks_workspace_a",
+        command: {
+          command: "open_service_url",
+          args: { url: "https://service.localhost/", waitForResult: true },
+        },
+      },
+    ]);
+    expect(response.content).toEqual([
+      { type: "text", text: "Opened service URL in the system browser." },
+    ]);
+  });
+
+  test("service URL dismissal summary says nothing opened", async () => {
+    const harness = new BrowserToolHarness();
+    harness.broker.setResponse({
+      requestId: "req-service-url",
+      ok: true,
+      result: {
+        command: "open_service_url",
+        url: "https://service.localhost/",
+        disposition: "dismissed",
+      },
+    });
+    const response = await harness.execute("browser_open_service_url", {
+      url: "https://service.localhost",
+    });
+    expect(response.content).toEqual([
+      { type: "text", text: "Dismissed service URL without opening it." },
+    ]);
+  });
+
+  test("service URL accepted summary does not claim the URL already opened", async () => {
+    const harness = new BrowserToolHarness();
+    harness.broker.setResponse({
+      requestId: "req-service-url",
+      ok: true,
+      result: {
+        command: "open_service_url",
+        url: "https://service.localhost/",
+        disposition: "accepted",
+      },
+    });
+    const response = await harness.execute("browser_open_service_url", {
+      url: "https://service.localhost",
+    });
+    expect(response.content).toEqual([
+      { type: "text", text: "Accepted service URL for desktop policy routing." },
     ]);
   });
 

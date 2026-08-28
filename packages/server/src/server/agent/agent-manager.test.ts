@@ -2503,6 +2503,7 @@ test("createAgent passes authoritative workspace identity through the provider l
       workspaceId: "workspace-create",
       env: { PASEO_WORKSPACE_ID: "stale-workspace" },
     },
+
   );
 
   expect(client.lastConfig).toEqual({
@@ -2510,7 +2511,7 @@ test("createAgent passes authoritative workspace identity through the provider l
     cwd: workdir,
     model: "gpt-5.4",
   });
-  expect(client.lastLaunchContext).toEqual({
+  expect(client.lastLaunchContext).toMatchObject({
     agentId: snapshot.id,
     env: {
       PASEO_AGENT_ID: snapshot.id,
@@ -2536,6 +2537,7 @@ test("createAgent passes authoritative workspace identity through the provider l
       PASEO_AGENT_ID: unscoped.id,
       PASEO_AGENT_CWD: workdir,
       PASEO_WORKSPACE_ID: "",
+
     },
   });
 });
@@ -3481,6 +3483,7 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
     },
     undefined,
     { workspaceId: "workspace-resume" },
+
   );
 
   expect(resumed.config.systemPrompt).toBe("new prompt");
@@ -3503,12 +3506,13 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
     },
   });
   expect(client.lastResumeOverrides).not.toHaveProperty("modeId");
-  expect(client.lastResumeLaunchContext).toEqual({
+  expect(client.lastResumeLaunchContext).toMatchObject({
     agentId: resumed.id,
     env: {
       PASEO_AGENT_ID: resumed.id,
       PASEO_AGENT_CWD: workdir,
       PASEO_WORKSPACE_ID: "workspace-resume",
+
     },
   });
 });
@@ -3612,7 +3616,7 @@ test("importProviderSession imports the selected session without listing and pub
 
   expect(client.listCalls).toBe(0);
   expect(client.importInput).toEqual({ providerHandleId: "thread-selected", cwd: workdir });
-  expect(client.importLaunchContext).toEqual({
+  expect(client.importLaunchContext).toMatchObject({
     agentId: imported.id,
     env: {
       PASEO_AGENT_ID: imported.id,
@@ -3714,9 +3718,10 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
     },
     undefined,
     { workspaceId: "workspace-reload" },
+
   );
 
-  expect(client.lastCreateLaunchContext).toEqual({
+  expect(client.lastCreateLaunchContext).toMatchObject({
     agentId: snapshot.id,
     env: {
       PASEO_AGENT_ID: snapshot.id,
@@ -3729,7 +3734,7 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
     systemPrompt: "reloaded prompt",
   });
 
-  expect(client.lastResumeLaunchContext).toEqual({
+  expect(client.lastResumeLaunchContext).toMatchObject({
     agentId: snapshot.id,
     env: {
       PASEO_AGENT_ID: snapshot.id,

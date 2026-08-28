@@ -16,9 +16,10 @@ vi.mock("@react-native-async-storage/async-storage", () => ({
     removeItem: vi.fn(async () => undefined),
   },
 }));
+
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { createJSONStorage, type StateStorage } from "zustand/middleware";
-import { mountBrowserAutomationHandler } from "./handler";
+import { mountBrowserAutomationHandler, type BrowserAutomationHandlerOptions } from "./handler";
 import type { DesktopHostBridge } from "@/desktop/host";
 import { useBrowserStore } from "@/desktop/browser/store";
 import { collectAllPanes, findPaneById } from "@/stores/workspace-layout-actions";
@@ -158,6 +159,9 @@ class BrowserAutomationHandlerHarness {
       host?: DesktopHostBridge | null;
       registrationWaitTimeoutMs?: number;
       registrationPollIntervalMs?: number;
+      serviceUrlOpener?: BrowserAutomationHandlerOptions["serviceUrlOpener"];
+      serviceUrlOperationTimeoutMs?: number;
+      serviceUrlQueueLimit?: number;
     } = {},
   ): void {
     this.unsubscribe = mountBrowserAutomationHandler({
@@ -170,6 +174,13 @@ class BrowserAutomationHandlerHarness {
         : {}),
       ...(input.registrationPollIntervalMs !== undefined
         ? { registrationPollIntervalMs: input.registrationPollIntervalMs }
+        : {}),
+      ...(input.serviceUrlOpener ? { serviceUrlOpener: input.serviceUrlOpener } : {}),
+      ...(input.serviceUrlOperationTimeoutMs !== undefined
+        ? { serviceUrlOperationTimeoutMs: input.serviceUrlOperationTimeoutMs }
+        : {}),
+      ...(input.serviceUrlQueueLimit !== undefined
+        ? { serviceUrlQueueLimit: input.serviceUrlQueueLimit }
         : {}),
     });
   }
@@ -226,6 +237,22 @@ function browserNewTabRequest(): BrowserAutomationExecuteRequest {
     command: {
       command: "new_tab",
       args: { url: "https://example.com" },
+    },
+  };
+}
+
+function browserServiceUrlRequest(
+  waitForResult: boolean,
+  url = "HTTPS://SERVICE.localhost:443/a/../",
+): BrowserAutomationExecuteRequest {
+  return {
+    type: "browser.automation.execute.request",
+    requestId: "req-service-url",
+    agentId: "agent-1",
+    workspaceId: "wks_workspace_a",
+    command: {
+      command: "open_service_url",
+      args: { url, waitForResult },
     },
   };
 }
@@ -431,6 +458,160 @@ describe("mountBrowserAutomationHandler", () => {
     );
     expect(browserPane?.id).not.toBe("main");
     expect(layout.focusedPaneId).toBe("main");
+  });
+
+  test("detached service URL dispatch acknowledges before a slow ask completes", async () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    let finishAsk: ((value: "external") => void) | undefined;
+    const slowAsk = new Promise<"external">((resolve) => {
+      finishAsk = resolve;
+    });
+    browser.mount({
+      serverId: "server-1",
+      serviceUrlOpener: async () => slowAsk,
+    });
+
+    browser.receive(browserServiceUrlRequest(false));
+
+    expect(browser.client.payloadAt(0)).toEqual({
+      requestId: "req-service-url",
+      ok: true,
+      result: {
+        command: "open_service_url",
+        url: "https://service.localhost/",
+        disposition: "accepted",
+      },
+    });
+    finishAsk?.("external");
+    await flushAsyncWork();
+    expect(browser.client.sentResponses).toHaveLength(1);
+  });
+
+  test("detached post-accept failures are logged without URL secrets", async () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    browser.mount({
+      serverId: "server-1",
+      serviceUrlOpener: async () => {
+        throw new Error("failed for https://service.localhost/?token=secret");
+      },
+    });
+
+    browser.receive(browserServiceUrlRequest(false));
+    await flushAsyncWork();
+
+    expect(browser.client.payloadAt(0)).toMatchObject({
+      ok: true,
+      result: { disposition: "accepted" },
+    });
+    expect(warn).toHaveBeenCalledWith(
+      "[browser] Detached Service URL policy open failed after acceptance",
+      { requestId: "req-service-url", errorName: "Error" },
+    );
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("token=secret");
+    warn.mockRestore();
+  });
+
+  test("accepted detached service URLs are queued and opened in order", async () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    const started: string[] = [];
+    let finishFirst: ((value: "dismissed") => void) | undefined;
+    browser.mount({
+      serverId: "server-1",
+      serviceUrlOpener: async (url) => {
+        started.push(url);
+        if (started.length === 1) {
+          return new Promise<"dismissed">((resolve) => {
+            finishFirst = resolve;
+          });
+        }
+        return "dismissed";
+      },
+    });
+
+    browser.receive(browserServiceUrlRequest(false, "https://service.localhost/first"));
+    browser.receive({
+      ...browserServiceUrlRequest(false, "https://service.localhost/second"),
+      requestId: "req-service-url-2",
+    });
+
+    expect(browser.client.sentResponses).toHaveLength(2);
+    expect(browser.client.payloadAt(1)).toMatchObject({
+      requestId: "req-service-url-2",
+      ok: true,
+      result: { disposition: "accepted" },
+    });
+    expect(started).toEqual(["https://service.localhost/first"]);
+    finishFirst?.("dismissed");
+    await flushAsyncWork();
+    expect(started).toEqual([
+      "https://service.localhost/first",
+      "https://service.localhost/second",
+    ]);
+  });
+
+  test("full service URL queue fails before acceptance", () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    browser.mount({
+      serverId: "server-1",
+      serviceUrlQueueLimit: 1,
+      serviceUrlOpener: async () => new Promise<"dismissed">(() => {}),
+    });
+
+    browser.receive(browserServiceUrlRequest(false));
+    browser.receive({ ...browserServiceUrlRequest(false), requestId: "req-service-url-2" });
+
+    expect(browser.client.payloadAt(1)).toMatchObject({
+      requestId: "req-service-url-2",
+      ok: false,
+      error: { code: "browser_denied", retryable: true },
+    });
+    browser.unmount();
+  });
+
+  test("malformed service URL returns a handler failure without enqueueing", () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    browser.mount({ serverId: "server-1" });
+    browser.receive(
+      browserServiceUrlRequest(
+        false,
+        "https://trusted.example/\n@evil.example",
+      ) as BrowserAutomationExecuteRequest,
+    );
+    expect(browser.client.payloadAt(0)).toMatchObject({
+      ok: false,
+      error: { code: "browser_unknown_error" },
+    });
+  });
+
+  test("waited policy open succeeds after visible tab creation without registration polling", async () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    browser.browser.response = emptyListTabsPayload();
+    browser.mount({
+      serverId: "server-1",
+      registrationWaitTimeoutMs: 1,
+      registrationPollIntervalMs: 1,
+      serviceUrlOpener: async (url, options) => {
+        await options?.openInApp?.(url);
+        return "in-app";
+      },
+    });
+
+    browser.receive(browserServiceUrlRequest(true));
+    await flushAsyncWork();
+
+    expect(browser.client.payloadAt(0)).toMatchObject({
+      requestId: "req-service-url",
+      ok: true,
+      result: {
+        command: "open_service_url",
+        url: "https://service.localhost/",
+        disposition: "in-app",
+        workspaceId: "wks_workspace_a",
+      },
+    });
+    expect(browser.browser.executedRequests).toEqual([]);
+    expect(browser.resident.ensuredWebviews).toHaveLength(1);
   });
 
   test("browser_new_tab returns a retryable timeout when the resident webview does not register", async () => {
