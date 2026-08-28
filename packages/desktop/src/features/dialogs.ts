@@ -10,6 +10,7 @@ interface AskOptions {
 interface AskWithCheckboxOptions extends AskOptions {
   checkboxLabel: string;
   checkboxChecked?: boolean;
+  dismissLabel?: string;
 }
 
 interface OpenOptions {
@@ -45,18 +46,24 @@ export function registerDialogHandlers(): void {
     "paseo:dialog:askWithCheckbox",
     async (event, message: string, options: AskWithCheckboxOptions) => {
       const win = BrowserWindow.fromWebContents(event.sender);
+      const hasDismiss = options.dismissLabel !== undefined;
+      const buttons = hasDismiss
+        ? [options.dismissLabel!, options.cancelLabel ?? "Cancel", options.okLabel ?? "OK"]
+        : [options.cancelLabel ?? "Cancel", options.okLabel ?? "OK"];
+      const okId = hasDismiss ? 2 : 1;
       const result = await dialog.showMessageBox(win ?? BrowserWindow.getFocusedWindow()!, {
         type: resolveDialogType(options.kind),
         title: options.title ?? "Confirm",
         message,
-        buttons: [options.cancelLabel ?? "Cancel", options.okLabel ?? "OK"],
-        defaultId: 1,
+        buttons,
+        defaultId: okId,
         cancelId: 0,
         checkboxLabel: options.checkboxLabel,
         checkboxChecked: options.checkboxChecked ?? false,
       });
       return {
-        confirmed: result.response === 1,
+        confirmed: result.response === okId,
+        dismissed: hasDismiss && result.response === 0,
         dontAskAgain: result.checkboxChecked,
       };
     },

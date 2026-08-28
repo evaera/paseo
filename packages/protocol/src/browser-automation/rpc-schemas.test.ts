@@ -13,6 +13,17 @@ const WAIT_CONDITION_MESSAGE = "browser_wait requires exactly one of text or url
 
 const commandParseCases = [
   {
+    name: "open service URL",
+    command: {
+      command: "open_service_url",
+      args: { url: "https://example.com/service" },
+    },
+    expected: {
+      command: "open_service_url",
+      args: { url: "https://example.com/service", waitForResult: false },
+    },
+  },
+  {
     name: "click",
     command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
     expected: {
@@ -619,19 +630,79 @@ describe("browser automation execute RPC schemas", () => {
     },
   );
 
-  test("navigate rejects non-http URLs at the protocol boundary", () => {
+  test.each(["navigate", "open_service_url"])(
+    "%s rejects non-http URLs at the protocol boundary",
+    (command) => {
+      const parsed = BrowserAutomationExecuteRequestSchema.safeParse({
+        type: "browser.automation.execute.request",
+        requestId: "req-url",
+        command: {
+          command,
+          args: {
+            ...(command === "navigate" ? { browserId: BROWSER_ID } : {}),
+            url: "file:///tmp/secret.txt",
+          },
+        },
+      });
+
+      expect(parsed).toMatchObject({
+        success: false,
+        error: { issues: [expect.objectContaining({ message: "URL must use http or https" })] },
+      });
+    },
+  );
+
+  test("service URL limits do not narrow the existing new_tab URL contract", () => {
+    const longUrl = `https://example.com/${"a".repeat(17_000)}`;
+    expect(
+      BrowserAutomationExecuteRequestSchema.safeParse({
+        type: "browser.automation.execute.request",
+        requestId: "req-new-tab",
+        command: { command: "new_tab", args: { url: longUrl } },
+      }).success,
+    ).toBe(true);
+    expect(
+      BrowserAutomationExecuteRequestSchema.safeParse({
+        type: "browser.automation.execute.request",
+        requestId: "req-service-url",
+        command: { command: "open_service_url", args: { url: longUrl } },
+      }).success,
+    ).toBe(false);
+  });
+
+  test("service URL commands reject control-whitespace spoofing", () => {
     const parsed = BrowserAutomationExecuteRequestSchema.safeParse({
       type: "browser.automation.execute.request",
-      requestId: "req-navigate",
+      requestId: "req-service-url",
       command: {
-        command: "navigate",
-        args: { browserId: BROWSER_ID, url: "file:///tmp/secret.txt" },
+        command: "open_service_url",
+        args: { url: "https://trusted.example/\n@evil.example/" },
       },
     });
-
     expect(parsed).toMatchObject({
       success: false,
-      error: { issues: [expect.objectContaining({ message: "URL must use http or https" })] },
+      error: {
+        issues: [expect.objectContaining({ message: expect.stringContaining("whitespace") })],
+      },
+    });
+  });
+
+  test("service URL responses support an explicit dismissed disposition", () => {
+    const parsed = BrowserAutomationExecuteResponseSchema.parse({
+      type: "browser.automation.execute.response",
+      payload: {
+        requestId: "req-service-url",
+        ok: true,
+        result: {
+          command: "open_service_url",
+          url: "https://service.localhost/",
+          disposition: "dismissed",
+        },
+      },
+    });
+    expect(parsed.payload).toMatchObject({
+      ok: true,
+      result: { command: "open_service_url", disposition: "dismissed" },
     });
   });
 

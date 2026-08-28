@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Route HTTP(S) opens from Paseo workspace processes to the in-app browser.
+# Route HTTP(S) opens from Paseo workspace processes through the desktop Service URLs policy.
 set -u
 
 SYSTEM_OPEN="${PASEO_OPEN_WRAPPER_SYSTEM_OPEN:-/usr/bin/open}"
@@ -11,7 +11,8 @@ elif [[ -x "$SELF_DIR/paseo" ]]; then
 else
   PASEO_CLI="$SELF_DIR/../bin/paseo"
 fi
-TIMEOUT_TICKS="${PASEO_OPEN_WRAPPER_TIMEOUT_TICKS:-25}"
+# Allow cold CLI/daemon connection plus the daemon's 2s desktop dispatch window.
+TIMEOUT_TICKS="${PASEO_OPEN_WRAPPER_TIMEOUT_TICKS:-90}"
 
 system_open() {
   exec "$SYSTEM_OPEN" "$@"
@@ -27,7 +28,7 @@ is_http_url() {
 route_url() {
   local url="$1"
   local pid tick status
-  PASEO_BROWSER_OPEN_ROUTING=1 "$PASEO_CLI" browser open "$url" >/dev/null 2>&1 &
+  PASEO_BROWSER_OPEN_ROUTING=1 "$PASEO_CLI" browser open-service-url "$url" >/dev/null 2>&1 &
   pid=$!
   tick=0
   while kill -0 "$pid" 2>/dev/null; do

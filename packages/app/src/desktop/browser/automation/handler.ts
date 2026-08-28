@@ -11,7 +11,14 @@ import {
   getBrowserRecord,
   useBrowserStore,
 } from "@/desktop/browser/store";
-import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import {
+  collectAllTabs,
+  FOCUSED_PANE_PLACEMENT,
+  useWorkspaceLayoutStore,
+} from "@/stores/workspace-layout-store";
+import { openServiceUrl } from "@/utils/open-service-url";
+import { canonicalizeServiceUrl } from "@/utils/service-url-policy";
+import { ServiceUrlRequestQueue } from "@/utils/service-url-request-queue";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 
 type BrowserAutomationExecuteRequest = Extract<
@@ -41,14 +48,21 @@ export interface BrowserAutomationHandlerOptions {
   ensureResidentBrowserWebview?: typeof ensureResidentBrowserWebviewDefault;
   registrationWaitTimeoutMs?: number;
   registrationPollIntervalMs?: number;
+  serviceUrlOpener?: typeof openServiceUrl;
+  serviceUrlOperationTimeoutMs?: number;
+  serviceUrlQueueLimit?: number;
 }
 
 export function mountBrowserAutomationHandler(
   options: BrowserAutomationHandlerOptions,
 ): () => void {
   const getHost = options.getHost ?? getDesktopHost;
+  const serviceUrlQueue = new ServiceUrlRequestQueue<BrowserAutomationResponsePayload>(
+    options.serviceUrlOperationTimeoutMs ?? 5 * 60_000,
+    options.serviceUrlQueueLimit ?? 10,
+  );
   const unsubscribe = options.client.on("browser.automation.execute.request", (request) => {
-    void handleBrowserAutomationRequest({
+    const requestOptions = {
       client: options.client,
       getHost,
       request,
@@ -61,10 +75,18 @@ export function mountBrowserAutomationHandler(
       ...(options.registrationPollIntervalMs !== undefined
         ? { registrationPollIntervalMs: options.registrationPollIntervalMs }
         : {}),
-    });
+      serviceUrlOpener: options.serviceUrlOpener ?? openServiceUrl,
+      serviceUrlQueue,
+    };
+    if (request.command.command === "open_service_url") {
+      void handleOpenServiceUrlRequest(requestOptions);
+      return;
+    }
+    void handleBrowserAutomationRequest(requestOptions);
   });
   return () => {
     unsubscribe();
+    serviceUrlQueue.dispose();
   };
 }
 
@@ -108,6 +130,8 @@ async function handleBrowserAutomationRequest(params: {
           serverId,
           browserHost,
           ensureResidentBrowserWebview,
+          tabOpen: { intent: "background" },
+          waitForRegistration: true,
           ...(registrationWaitTimeoutMs !== undefined ? { registrationWaitTimeoutMs } : {}),
           ...(registrationPollIntervalMs !== undefined ? { registrationPollIntervalMs } : {}),
         }),
@@ -297,6 +321,141 @@ function findWorkspaceBrowserTab(input: {
   return tab ? { workspaceKey, tabId: tab.tabId } : null;
 }
 
+async function handleOpenServiceUrlRequest(params: {
+  client: BrowserAutomationHandlerOptions["client"];
+  getHost: () => DesktopHostBridge | null;
+  request: BrowserAutomationExecuteRequest;
+  serverId?: string;
+  ensureResidentBrowserWebview: typeof ensureResidentBrowserWebviewDefault;
+  registrationWaitTimeoutMs?: number;
+  registrationPollIntervalMs?: number;
+  serviceUrlOpener: typeof openServiceUrl;
+  serviceUrlQueue: ServiceUrlRequestQueue<BrowserAutomationResponsePayload>;
+}): Promise<void> {
+  const command = params.request.command as Extract<
+    BrowserAutomationExecuteRequest["command"],
+    { command: "open_service_url" }
+  >;
+  let canonicalUrl: string;
+  try {
+    canonicalUrl = canonicalizeServiceUrl(command.args.url);
+  } catch (error) {
+    sendServiceUrlFailure(params.client, params.request.requestId, error);
+    return;
+  }
+  const canonicalRequest = {
+    ...params.request,
+    command: { ...command, args: { ...command.args, url: canonicalUrl } },
+  } as BrowserAutomationExecuteRequest;
+  const workspaceKey = `${params.serverId ?? "desktop"}:${params.request.workspaceId ?? "no-workspace"}`;
+  const queued = params.serviceUrlQueue.enqueue(workspaceKey, (signal) =>
+    openServiceUrlForRequest(
+      { ...params, request: canonicalRequest, browserHost: params.getHost()?.browser },
+      signal,
+    ),
+  );
+  if (!queued) {
+    sendServiceUrlFailure(
+      params.client,
+      params.request.requestId,
+      Object.assign(new Error("The Service URL queue is full for this workspace."), {
+        code: "browser_denied",
+        retryable: true,
+      }),
+    );
+    return;
+  }
+  if (!command.args.waitForResult) {
+    void queued.completion.catch((error: unknown) => {
+      console.warn("[browser] Detached Service URL policy open failed after acceptance", {
+        requestId: params.request.requestId,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+    });
+    params.client.sendBrowserAutomationExecuteResponse({
+      type: "browser.automation.execute.response",
+      payload: {
+        requestId: params.request.requestId,
+        ok: true,
+        result: { command: "open_service_url", url: canonicalUrl, disposition: "accepted" },
+      },
+    });
+    return;
+  }
+  try {
+    params.client.sendBrowserAutomationExecuteResponse({
+      type: "browser.automation.execute.response",
+      payload: await queued.completion,
+    });
+  } catch (error) {
+    sendServiceUrlFailure(params.client, params.request.requestId, error);
+  }
+}
+
+function sendServiceUrlFailure(
+  client: BrowserAutomationHandlerOptions["client"],
+  requestId: string,
+  error: unknown,
+): void {
+  client.sendBrowserAutomationExecuteResponse({
+    type: "browser.automation.execute.response",
+    payload: normalizeThrownBridgeError(requestId, error),
+  });
+}
+
+async function openServiceUrlForRequest(
+  params: {
+    request: BrowserAutomationExecuteRequest;
+    serverId?: string;
+    browserHost: DesktopHostBridge["browser"] | undefined;
+    ensureResidentBrowserWebview: typeof ensureResidentBrowserWebviewDefault;
+    registrationWaitTimeoutMs?: number;
+    registrationPollIntervalMs?: number;
+    serviceUrlOpener: typeof openServiceUrl;
+  },
+  signal: AbortSignal,
+): Promise<BrowserAutomationResponsePayload> {
+  const command = params.request.command as Extract<
+    BrowserAutomationExecuteRequest["command"],
+    { command: "open_service_url" }
+  >;
+  let openedBrowserId: string | undefined;
+  let openedWorkspaceId: string | undefined;
+  const disposition = await params.serviceUrlOpener(command.args.url, {
+    signal,
+    openInApp: async (url) => {
+      const payload = await openBrowserTabForRequest({
+        ...params,
+        request: {
+          ...params.request,
+          command: { command: "new_tab", args: { url } },
+        },
+        tabOpen: { intent: "reveal", placement: FOCUSED_PANE_PLACEMENT },
+        waitForRegistration: false,
+      });
+      if (!payload.ok) {
+        throw Object.assign(new Error(payload.error.message), payload.error);
+      }
+      if (payload.result.command === "new_tab") {
+        openedBrowserId = payload.result.browserId;
+        openedWorkspaceId = payload.result.workspaceId;
+      }
+    },
+  });
+  return {
+    requestId: params.request.requestId,
+    ok: true,
+    result: {
+      command: "open_service_url",
+      url: new URL(command.args.url).href,
+      disposition,
+      ...(openedBrowserId && openedWorkspaceId
+        ? { browserId: openedBrowserId, workspaceId: openedWorkspaceId }
+        : {}),
+    },
+  };
+}
+
 async function openBrowserTabForRequest(params: {
   request: BrowserAutomationExecuteRequest;
   serverId?: string;
@@ -304,6 +463,8 @@ async function openBrowserTabForRequest(params: {
   ensureResidentBrowserWebview: typeof ensureResidentBrowserWebviewDefault;
   registrationWaitTimeoutMs?: number;
   registrationPollIntervalMs?: number;
+  tabOpen: { intent: "reveal" | "background"; placement?: typeof FOCUSED_PANE_PLACEMENT };
+  waitForRegistration: boolean;
 }): Promise<BrowserAutomationResponsePayload> {
   const {
     request,
@@ -339,28 +500,33 @@ async function openBrowserTabForRequest(params: {
   useWorkspaceLayoutStore.getState().openTab({
     workspaceKey,
     target: { kind: "browser", browserId },
-    intent: "background",
+    ...params.tabOpen,
   });
 
-  if (browserHost?.executeAutomationCommand) {
+  const executeAutomationCommand = browserHost?.executeAutomationCommand;
+  if (executeAutomationCommand) {
     ensureResidentBrowserWebview({ browserId, workspaceId, url: normalizedUrl });
-    const registered = await waitForBrowserRegistration({
-      request,
-      browserId,
-      workspaceId,
-      executeAutomationCommand: browserHost.executeAutomationCommand,
-      ...(registrationWaitTimeoutMs !== undefined ? { timeoutMs: registrationWaitTimeoutMs } : {}),
-      ...(registrationPollIntervalMs !== undefined
-        ? { pollIntervalMs: registrationPollIntervalMs }
-        : {}),
-    });
-    if (!registered) {
-      return browserAutomationFailure({
-        requestId: request.requestId,
-        code: "browser_timeout",
-        message: `Timed out waiting for browser tab ${browserId} to register with the browser automation host. Try browser_new_tab again.`,
-        retryable: true,
+    if (params.waitForRegistration) {
+      const registered = await waitForBrowserRegistration({
+        request,
+        browserId,
+        workspaceId,
+        executeAutomationCommand,
+        ...(registrationWaitTimeoutMs !== undefined
+          ? { timeoutMs: registrationWaitTimeoutMs }
+          : {}),
+        ...(registrationPollIntervalMs !== undefined
+          ? { pollIntervalMs: registrationPollIntervalMs }
+          : {}),
       });
+      if (!registered) {
+        return browserAutomationFailure({
+          requestId: request.requestId,
+          code: "browser_timeout",
+          message: `Timed out waiting for browser tab ${browserId} to register with the browser automation host. Try browser_new_tab again.`,
+          retryable: true,
+        });
+      }
     }
   }
 

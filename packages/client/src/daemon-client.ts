@@ -4751,7 +4751,13 @@ export class DaemonClient {
 
   async executeBrowserCommand(
     command: BrowserAutomationCommand,
-    options?: { workspaceId?: string; cwd?: string; agentId?: string; requestId?: string },
+    options?: {
+      workspaceId?: string;
+      cwd?: string;
+      agentId?: string;
+      requestId?: string;
+      timeoutMs?: number;
+    },
   ): Promise<BrowserCommandExecuteResponse["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId: options?.requestId,
@@ -4763,6 +4769,7 @@ export class DaemonClient {
         ...(options?.agentId ? { agentId: options.agentId } : {}),
       },
       responseType: "browser.command.execute.response",
+      ...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
     });
   }
 

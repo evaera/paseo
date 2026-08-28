@@ -1703,6 +1703,8 @@ export class VoiceAssistantWebSocketServer {
         pushTokenRevocation: true,
         // COMPAT(plugins): added in v0.3.0, remove gate after 2027-08-07.
         plugins: true,
+        // COMPAT(serviceUrlOpenPolicyRpc): added in v0.7.0, remove gate after 2027-08-28.
+        serviceUrlOpenPolicyRpc: true,
         pluginManagement: true,
         pluginGitManagement: true,
         pluginLogs: true,

@@ -23,6 +23,7 @@ const BROWSER_AUTOMATION_WAIT_CONDITION_MESSAGE =
 export const BROWSER_AUTOMATION_COMMAND_NAMES = [
   "list_tabs",
   "new_tab",
+  "open_service_url",
   "snapshot",
   "click",
   "fill",
@@ -69,6 +70,25 @@ const BrowserAutomationHttpUrlSchema = z
     return protocol === "http:" || protocol === "https:";
   }, "URL must use http or https");
 
+function hasServiceUrlControlOrWhitespace(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 32 || code === 127;
+  });
+}
+const BrowserAutomationServiceUrlSchema = z
+  .string()
+  .max(16_384)
+  .refine(
+    (value) => !hasServiceUrlControlOrWhitespace(value),
+    "URL must not contain control characters or whitespace",
+  )
+  .url()
+  .refine((value) => {
+    const protocol = new URL(value).protocol;
+    return protocol === "http:" || protocol === "https:";
+  }, "URL must use http or https");
+
 export const BrowserAutomationListTabsCommandSchema = z.object({
   command: z.literal("list_tabs"),
   args: z.object({}).strict().default({}),
@@ -82,6 +102,16 @@ export const BrowserAutomationNewTabCommandSchema = z.object({
     })
     .strict()
     .default({}),
+});
+
+export const BrowserAutomationOpenServiceUrlCommandSchema = z.object({
+  command: z.literal("open_service_url"),
+  args: z
+    .object({
+      url: BrowserAutomationServiceUrlSchema,
+      waitForResult: z.boolean().default(false),
+    })
+    .strict(),
 });
 
 export const BrowserAutomationSnapshotCommandSchema = z.object({
@@ -234,6 +264,7 @@ export const BrowserAutomationCloseTabCommandSchema = z.object({
 export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsCommandSchema,
   BrowserAutomationNewTabCommandSchema,
+  BrowserAutomationOpenServiceUrlCommandSchema,
   BrowserAutomationSnapshotCommandSchema,
   BrowserAutomationClickCommandSchema,
   BrowserAutomationFillCommandSchema,
@@ -277,6 +308,14 @@ export const BrowserAutomationNewTabResultSchema = z.object({
   browserId: BrowserAutomationBrowserIdSchema,
   workspaceId: z.string().min(1),
   url: z.string().min(1),
+});
+
+export const BrowserAutomationOpenServiceUrlResultSchema = z.object({
+  command: z.literal("open_service_url"),
+  url: BrowserAutomationServiceUrlSchema,
+  disposition: z.enum(["accepted", "dismissed", "in-app", "external"]),
+  browserId: BrowserAutomationBrowserIdSchema.optional(),
+  workspaceId: z.string().min(1).optional(),
 });
 
 export const BrowserAutomationSnapshotStatsSchema = z
@@ -458,6 +497,7 @@ export const BrowserAutomationCloseTabResultSchema = z.object({
 export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsResultSchema,
   BrowserAutomationNewTabResultSchema,
+  BrowserAutomationOpenServiceUrlResultSchema,
   BrowserAutomationSnapshotResultSchema,
   BrowserAutomationClickResultSchema,
   BrowserAutomationFillResultSchema,

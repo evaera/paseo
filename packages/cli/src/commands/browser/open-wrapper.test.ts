@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -44,10 +52,12 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe("macOS open wrapper", () => {
-  test("routes HTTP URLs through paseo browser open", () => {
+  test("routes HTTP URLs through the Service URLs policy command", () => {
     const result = run(["https://example.com/review"]);
     expect(result.status).toBe(0);
-    expect(readFileSync(routedLog, "utf8")).toBe("browser open https://example.com/review\n");
+    expect(readFileSync(routedLog, "utf8")).toBe(
+      "browser open-service-url https://example.com/review\n",
+    );
   });
 
   test.each([
@@ -60,6 +70,32 @@ describe("macOS open wrapper", () => {
     const result = run(args, env);
     expect(result.status).toBe(0);
     expect(readFileSync(systemLog, "utf8")).toBe(`${args.join(" ")}\n`);
+  });
+
+  test("accepted dispatch exits without fallback while a slow ask remains pending", () => {
+    executable(
+      join(root, "paseo"),
+      '#!/bin/sh\nprintf "%s\\n" "$*" >> "$ROUTED_LOG"\n(sleep 1; printf done > "$ROUTED_LOG.ask") >/dev/null 2>&1 &\nexit 0\n',
+    );
+    const started = Date.now();
+    expect(run(["https://example.com/ask"]).status).toBe(0);
+    expect(Date.now() - started).toBeLessThan(750);
+    expect(existsSync(systemLog)).toBe(false);
+  });
+
+  test("cold accepted dispatch completes within the default margin without double-opening", () => {
+    executable(join(root, "paseo"), '#!/bin/sh\nsleep 3\nprintf "%s\\n" "$*" >> "$ROUTED_LOG"\n');
+    const started = Date.now();
+    expect(run(["https://example.com/cold"]).status).toBe(0);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(2_500);
+    expect(Date.now() - started).toBeLessThan(8_000);
+    expect(existsSync(systemLog)).toBe(false);
+  });
+
+  test("an unavailable compatible host falls back to the system browser", () => {
+    executable(join(root, "paseo"), "#!/bin/sh\nexit 7\n");
+    expect(run(["https://example.com/fallback"]).status).toBe(0);
+    expect(readFileSync(systemLog, "utf8")).toBe("https://example.com/fallback\n");
   });
 
   test("routes multiple URLs independently without double-opening successes", () => {
@@ -75,7 +111,7 @@ describe("macOS open wrapper", () => {
     ];
     expect(run(args).status).toBe(0);
     expect(readFileSync(routedLog, "utf8")).toBe(
-      "browser open https://example.com/success\nbrowser open https://example.com/fail\n",
+      "browser open-service-url https://example.com/success\nbrowser open-service-url https://example.com/fail\n",
     );
     expect(readFileSync(systemLog, "utf8")).toBe(
       "notes.txt https://example.com/fail mailto:test@example.com\n",
@@ -114,6 +150,6 @@ describe("macOS open wrapper", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(readFileSync(routedLog, "utf8")).toBe(`browser open ${url}\n`);
+    expect(readFileSync(routedLog, "utf8")).toBe(`browser open-service-url ${url}\n`);
   });
 });
