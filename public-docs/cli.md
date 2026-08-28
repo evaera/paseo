@@ -23,6 +23,20 @@ paseo logs <id>                      # View agent timeline
 paseo stop <id>                      # Stop an agent
 ```
 
+## Browser profiles and tabs
+
+Manage the desktop browser host from a terminal:
+
+```bash
+paseo browser profiles
+paseo browser profiles --json
+paseo browser create-profile "Work"
+paseo browser open https://example.com --profile "Work" --workspace <workspace-id>
+paseo browser delete-profile "Work"
+```
+
+Profile arguments accept a profile name or ID. JSON tab results include `profileId` and `profileName`, so scripts can pass the stable ID back to `paseo browser open --profile`. Default cannot be deleted. Every deletion request opens one native confirmation in the connected desktop app, including CLI and agent requests. Profile commands require exactly one connected browser host.
+
 ## Provider diagnostics
 
 Ask the daemon to inspect the provider environment it actually uses:

@@ -11,6 +11,22 @@ import type { DesktopWindowChromeMode } from "./window/chrome.js";
 const PASEO_BROWSER_PROFILE_PARTITION = "persist:paseo-browser";
 
 type EventHandler = (payload: unknown) => void;
+interface BrowserProfileBridgeRecord {
+  id: string;
+  name: string;
+  createdAt: number;
+  partition: string;
+}
+const browserProfilePartitions = new Map([["default", PASEO_BROWSER_PROFILE_PARTITION]]);
+
+function rememberBrowserProfiles(
+  profiles: BrowserProfileBridgeRecord[],
+): BrowserProfileBridgeRecord[] {
+  browserProfilePartitions.clear();
+  browserProfilePartitions.set("default", PASEO_BROWSER_PROFILE_PARTITION);
+  for (const profile of profiles) browserProfilePartitions.set(profile.id, profile.partition);
+  return profiles;
+}
 
 function readWindowChromeMode(): DesktopWindowChromeMode {
   const prefix = "--paseo-window-chrome-mode=";
@@ -26,6 +42,7 @@ function readWindowChromeMode(): DesktopWindowChromeMode {
 interface AttachedBrowserRegistration {
   browserId: string;
   workspaceId: string;
+  profileId?: string;
   webContentsId: number;
 }
 
@@ -117,6 +134,31 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     setShortcutPolicy: (input: BrowserKeyboardPolicy) =>
       ipcRenderer.invoke("paseo:browser:set-shortcut-policy", input),
     profilePartition: PASEO_BROWSER_PROFILE_PARTITION,
+    profilePartitionFor: (profileId: string) => {
+      const partition = browserProfilePartitions.get(profileId);
+      if (!partition) throw new Error(`Unknown browser profile: ${profileId}`);
+      return partition;
+    },
+    listProfiles: async () =>
+      rememberBrowserProfiles(
+        (await ipcRenderer.invoke("paseo:browser:profiles:list")) as BrowserProfileBridgeRecord[],
+      ),
+    createProfile: async (name: string) => {
+      const profile = (await ipcRenderer.invoke(
+        "paseo:browser:profiles:create",
+        name,
+      )) as BrowserProfileBridgeRecord;
+      browserProfilePartitions.set(profile.id, profile.partition);
+      return profile;
+    },
+    deleteProfile: async (profileId: string) => {
+      const deleted = (await ipcRenderer.invoke(
+        "paseo:browser:profiles:delete",
+        profileId,
+      )) as boolean;
+      if (deleted) browserProfilePartitions.delete(profileId);
+      return deleted;
+    },
     registerAttachedBrowser: (input: AttachedBrowserRegistration) =>
       ipcRenderer.invoke("paseo:browser:register-attached", input),
     unregisterWorkspaceBrowser: (browserId: string) =>

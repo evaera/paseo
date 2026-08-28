@@ -15,6 +15,7 @@ import {
   autoUpdater as electronAutoUpdater,
   BrowserWindow,
   clipboard,
+  dialog,
   Menu,
   ipcMain,
   nativeImage,
@@ -73,11 +74,16 @@ import {
   clearPaseoBrowserProfile,
   getLegacyPaseoBrowserProfileSession,
   PASEO_BROWSER_PROFILE_PARTITION,
-  getPaseoBrowserProfileSession,
   getPaseoBrowserProfileSessions,
   listPaseoBrowserProfileGuests,
   readLegacyPaseoBrowserIds,
 } from "./features/browser-profile.js";
+import {
+  browserProfilePartition,
+  broadcastBrowserProfileEvent,
+  createBrowserProfilesStore,
+  deleteBrowserProfileWithConfirmation,
+} from "./features/browser-profiles.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
 import {
   createDesktopWindowOwner,
@@ -134,6 +140,7 @@ app.setName(APP_NAME);
 interface AttachedBrowserInput {
   browserId: string;
   workspaceId: string;
+  profileId?: string;
   webContentsId: number;
 }
 
@@ -155,9 +162,14 @@ function readAttachedBrowserInput(input: unknown): AttachedBrowserInput | null {
   ) {
     return null;
   }
+  const profileId =
+    typeof record.profileId === "string" && record.profileId.trim()
+      ? record.profileId.trim()
+      : undefined;
   return {
     browserId: record.browserId.trim(),
     workspaceId: record.workspaceId.trim(),
+    ...(profileId ? { profileId } : {}),
     webContentsId: record.webContentsId,
   };
 }
@@ -215,13 +227,14 @@ function showBrowserWebviewContextMenu(
 
 function getBrowserPopupWindowOptions(
   mainWindow: BrowserWindow,
+  profileSession: Electron.Session,
 ): Electron.BrowserWindowConstructorOptions {
   return {
     parent: mainWindow,
     show: true,
     autoHideMenuBar: true,
     webPreferences: {
-      partition: PASEO_BROWSER_PROFILE_PARTITION,
+      session: profileSession,
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,
       nodeIntegrationInWorker: false,
@@ -256,7 +269,10 @@ function installBrowserWindowOpenHandler(input: {
     if (decision.kind === "popup") {
       return {
         action: "allow",
-        overrideBrowserWindowOptions: getBrowserPopupWindowOptions(mainWindow),
+        overrideBrowserWindowOptions: getBrowserPopupWindowOptions(
+          mainWindow,
+          sourceContents.session,
+        ),
       };
     }
 
@@ -376,15 +392,87 @@ ipcMain.handle("paseo:agent-navigation:ready", (event) => {
   return agentNavigationInbox.windowReady(event.sender.id);
 });
 
-ipcMain.handle("paseo:browser:register-attached", (event, rawInput: unknown) => {
+const knownBrowserProfilePartitions = new Set([PASEO_BROWSER_PROFILE_PARTITION]);
+const browserProfiles = createBrowserProfilesStore({
+  userDataPath: app.getPath("userData"),
+  removePartitionData: async (profileId) => {
+    const profileSession = session.fromPartition(browserProfilePartition(profileId));
+    const drainDeadline = Date.now() + 2_000;
+    let activeGuests = listPaseoBrowserProfileGuests({
+      profileSession,
+      webContents: webContents.getAllWebContents(),
+    });
+    while (activeGuests.length > 0 && Date.now() < drainDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      activeGuests = listPaseoBrowserProfileGuests({
+        profileSession,
+        webContents: webContents.getAllWebContents(),
+      });
+    }
+    if (activeGuests.length > 0) {
+      throw new Error("Close all tabs using this browser profile before deleting it.");
+    }
+    await Promise.all([
+      profileSession.clearStorageData(),
+      profileSession.clearCache(),
+      profileSession.clearAuthCache(),
+    ]);
+  },
+});
+
+ipcMain.handle("paseo:browser:profiles:list", () => browserProfiles.list());
+ipcMain.handle("paseo:browser:profiles:create", async (_event, name: unknown) => {
+  const profile = await browserProfiles.create(name);
+  knownBrowserProfilePartitions.add(browserProfilePartition(profile.id));
+  broadcastBrowserProfileEvent(BrowserWindow.getAllWindows(), "browser-profiles-changed", {});
+  return profile;
+});
+ipcMain.handle("paseo:browser:profiles:delete", async (event, profileId: unknown) => {
+  const deleted = await deleteBrowserProfileWithConfirmation({
+    store: browserProfiles,
+    profileId,
+    confirm: async (profile) => {
+      const parent =
+        BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow();
+      const options = {
+        type: "warning" as const,
+        title: "Delete browser profile?",
+        message: `Delete ${profile.name} and all of its browser data?`,
+        buttons: ["Cancel", "Delete"],
+        defaultId: 0,
+        cancelId: 0,
+      };
+      const result = parent
+        ? await dialog.showMessageBox(parent, options)
+        : await dialog.showMessageBox(options);
+      return result.response === 1;
+    },
+    beforeDelete: (profile) => {
+      broadcastBrowserProfileEvent(BrowserWindow.getAllWindows(), "browser-profile-deleting", {
+        profileId: profile.id,
+      });
+    },
+  });
+  if (deleted && typeof profileId === "string") {
+    knownBrowserProfilePartitions.delete(browserProfilePartition(profileId));
+    broadcastBrowserProfileEvent(BrowserWindow.getAllWindows(), "browser-profiles-changed", {});
+  }
+  return deleted;
+});
+
+ipcMain.handle("paseo:browser:register-attached", async (event, rawInput: unknown) => {
   const input = readAttachedBrowserInput(rawInput);
   if (!input) {
     throw new Error("Invalid attached browser registration");
   }
+  const profileId = await browserProfiles.resolveId(input.profileId);
+  if (!profileId) {
+    throw new Error("Attached browser profile was rejected");
+  }
   const registered = registerAttachedPaseoBrowser({
     ...input,
     sender: event.sender,
-    profileSession: getPaseoBrowserProfileSession(session),
+    profileSession: session.fromPartition(browserProfilePartition(profileId)),
     findWebContents: (webContentsId) => webContents.fromId(webContentsId) ?? null,
   });
   if (!registered) {
@@ -502,14 +590,21 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
     session,
     readLegacyPaseoBrowserIds(rawLegacyBrowserIds),
   );
-  const profileSession = profileSessions[0];
+  const namedProfiles = await browserProfiles.list();
+  const allProfileSessions = [
+    ...profileSessions,
+    ...namedProfiles
+      .filter((profile) => profile.id !== "default")
+      .map((profile) => session.fromPartition(browserProfilePartition(profile.id))),
+  ];
   await clearPaseoBrowserProfile({
-    profileSessions,
-    listGuests: () =>
-      listPaseoBrowserProfileGuests({
-        profileSession,
-        webContents: webContents.getAllWebContents(),
-      }),
+    profileSessions: allProfileSessions,
+    listGuests: () => {
+      const contents = webContents.getAllWebContents();
+      return allProfileSessions.flatMap((profileSession) =>
+        listPaseoBrowserProfileGuests({ profileSession, webContents: contents }),
+      );
+    },
     logReloadError: (webContentsId, error) => {
       log.warn("[browser-profile] failed to reload guest", { webContentsId, error });
     },
@@ -714,7 +809,11 @@ async function createWindow(
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
   mainWindow.webContents.on("will-attach-webview", (event, webPreferences, params) => {
-    if (!isPaseoBrowserWebviewAttach(params)) {
+    if (
+      !isPaseoBrowserWebviewAttach(params, (partition) =>
+        knownBrowserProfilePartitions.has(partition),
+      )
+    ) {
       event.preventDefault();
       return;
     }
@@ -901,6 +1000,9 @@ async function bootstrap(): Promise<void> {
   }
 
   await app.whenReady();
+  for (const profile of await browserProfiles.list()) {
+    knownBrowserProfilePartitions.add(browserProfilePartition(profile.id));
+  }
 
   const appDistDir = getAppDistDir();
   protocol.handle(APP_SCHEME, (request) => {

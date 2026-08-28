@@ -66,6 +66,61 @@ const BrowserWaitInputSchema = z
 
 export function registerBrowserTools(options: RegisterBrowserToolsOptions): void {
   options.registerTool(
+    "browser_list_profiles",
+    {
+      title: "List browser profiles",
+      description: "List persistent Paseo browser profiles. Default is always first.",
+      inputSchema: {},
+    },
+    async () => {
+      const context = resolveBrowserToolContext(options);
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        command: { command: "list_profiles", args: {} },
+      });
+      return browserToolResult({ payload, context });
+    },
+  );
+
+  options.registerTool(
+    "browser_create_profile",
+    {
+      title: "Create browser profile",
+      description: "Create an empty persistent Paseo browser profile with an isolated cookie jar.",
+      inputSchema: { name: z.string().trim().min(1).max(80) },
+    },
+    async ({ name }) => {
+      const context = resolveBrowserToolContext(options);
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        command: { command: "create_profile", args: { name } },
+      });
+      return browserToolResult({ payload, context });
+    },
+  );
+
+  options.registerTool(
+    "browser_delete_profile",
+    {
+      title: "Delete browser profile",
+      description:
+        "Delete a named Paseo browser profile and its browser data. Default cannot be deleted.",
+      inputSchema: { profile: z.string().trim().min(1).max(80) },
+    },
+    async ({ profile }) => {
+      const context = resolveBrowserToolContext(options);
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        command: { command: "delete_profile", args: { profile } },
+      });
+      return browserToolResult({ payload, context });
+    },
+  );
+
+  options.registerTool(
     "browser_list_tabs",
     {
       title: "List browser tabs",
@@ -101,9 +156,10 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       inputSchema: {
         url: BrowserHttpUrlInputSchema.optional(),
         placement: WorkspaceLayoutPlacementSchema.optional(),
+        profile: z.string().trim().min(1).max(80).optional(),
       },
     },
-    async ({ url, placement }) => {
+    async ({ url, placement, profile }) => {
       const context = resolveBrowserToolContext(options);
       const missingWorkspace = requireWorkspaceContext(context);
       if (missingWorkspace) {
@@ -118,6 +174,7 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
           args: {
             ...(url ? { url } : {}),
             ...(placement ? { placement } : {}),
+            ...(profile ? { profile } : {}),
           },
         },
       });
@@ -880,7 +937,10 @@ function summarizeBrowserSuccess(
     }
     const tabLines = payload.result.tabs.map((tab) => {
       const active = tab.isActive ? " active" : "";
-      return `- browserId=${tab.browserId}${active} title=${JSON.stringify(tab.title || "Untitled")} url=${tab.url}`;
+      const profile = tab.profileId
+        ? ` profileId=${tab.profileId} profileName=${JSON.stringify(tab.profileName ?? "Default")}`
+        : "";
+      return `- browserId=${tab.browserId}${active}${profile} title=${JSON.stringify(tab.title || "Untitled")} url=${tab.url}`;
     });
     return withDialogs(
       [
@@ -891,8 +951,15 @@ function summarizeBrowserSuccess(
   }
 
   if (payload.result.command === "new_tab") {
+    const profileSummary =
+      payload.result.profileId && payload.result.profileName
+        ? ` profileId=${payload.result.profileId} profileName=${JSON.stringify(payload.result.profileName)}`
+        : "";
+    const profileHint = payload.result.profileId
+      ? " and profileId to open another tab in the same profile"
+      : "";
     return withDialogs(
-      `Created browser tab browserId=${payload.result.browserId} url=${payload.result.url}. Use this browserId for tab-scoped browser tools.`,
+      `Created browser tab browserId=${payload.result.browserId}${profileSummary} url=${payload.result.url}. Use this browserId for tab-scoped browser tools${profileHint}.`,
     );
   }
 

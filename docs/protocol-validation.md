@@ -30,6 +30,7 @@ zod-aot is exact-pinned and young enough that compiler patches are treated as pa
 
 - discriminated-union branch output must propagate `.default()` fields
 - current sequential item routing must accept `tool_call`-like status branches
+- boolean-literal discriminators must use a plain union because zod-aot 0.20.4 emits string switch cases for them
 - generated runtime imports must keep `.js` extensions for packaged Node ESM
 - the generated WebSocket envelope accepts a minimal valid message and rejects a corrupted one
 

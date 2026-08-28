@@ -13,6 +13,7 @@ import {
   createBrowserRecord,
   normalizeBrowserIndexState,
   normalizeBrowserUrl,
+  normalizeStaleBrowserProfileIds,
   removeBrowserFromIndex,
   sanitizeBrowsersForPersist,
   trimNonEmpty,
@@ -26,9 +27,10 @@ export {
 } from "./state";
 
 interface BrowserStoreState extends BrowserIndexState {
-  createBrowser: (input?: { initialUrl?: string }) => string;
+  createBrowser: (input?: { initialUrl?: string; profileId?: string }) => string;
   updateBrowser: (browserId: string, patch: BrowserRecordPatch) => void;
   setBrowserViewport: (browserId: string, viewport: BrowserViewport) => void;
+  normalizeBrowserProfiles: (profileIds: ReadonlySet<string>) => void;
   removeBrowser: (browserId: string) => void;
 }
 
@@ -51,6 +53,7 @@ export const useBrowserStore = create<BrowserStoreState>()(
         const browserId = createBrowserId();
         const record = createBrowserRecord({
           browserId,
+          profileId: input?.profileId,
           initialUrl: input?.initialUrl,
           now: Date.now(),
         });
@@ -69,6 +72,9 @@ export const useBrowserStore = create<BrowserStoreState>()(
       },
       setBrowserViewport: (browserId, viewport) => {
         set((state) => applyBrowserPatch(state, browserId, { viewport }));
+      },
+      normalizeBrowserProfiles: (profileIds) => {
+        set((state) => normalizeStaleBrowserProfileIds(state, profileIds));
       },
       removeBrowser: (browserId) => {
         set((state) => removeBrowserFromIndex(state, browserId));
@@ -94,7 +100,7 @@ export function getBrowserRecord(browserId: string): BrowserRecord | null {
   return useBrowserStore.getState().browsersById[normalizedBrowserId] ?? null;
 }
 
-export function createWorkspaceBrowser(input?: { initialUrl?: string }): {
+export function createWorkspaceBrowser(input?: { initialUrl?: string; profileId?: string }): {
   browserId: string;
   url: string;
 } {

@@ -6,6 +6,7 @@ import {
   createBrowserRecord,
   normalizeBrowserIndexState,
   normalizeBrowserUrl,
+  normalizeStaleBrowserProfileIds,
   removeBrowserFromIndex,
   sanitizeBrowsersForPersist,
 } from "./state";
@@ -52,6 +53,7 @@ describe("createBrowserRecord", () => {
 
     expect(record).toEqual({
       browserId: "b1",
+      profileId: "default",
       url: "http://localhost:8081",
       title: "",
       isLoading: false,
@@ -175,6 +177,24 @@ describe("sanitizeBrowsersForPersist", () => {
   });
 });
 
+describe("normalizeStaleBrowserProfileIds", () => {
+  it("moves stale profile ids to Default without changing the current URL", () => {
+    const state = withRecords([
+      createBrowserRecord({
+        browserId: "b1",
+        profileId: "deleted-profile",
+        initialUrl: "https://current.test/path",
+        now: 0,
+      }),
+    ]);
+    const normalized = normalizeStaleBrowserProfileIds(state, new Set(["default"]));
+    expect(normalized.browsersById.b1).toMatchObject({
+      profileId: "default",
+      url: "https://current.test/path",
+    });
+  });
+});
+
 describe("normalizeBrowserIndexState", () => {
   it("defaults legacy persisted records to Responsive", () => {
     const legacy = createBrowserRecord({
@@ -183,9 +203,10 @@ describe("normalizeBrowserIndexState", () => {
       now: 0,
     }) as Partial<ReturnType<typeof createBrowserRecord>>;
     delete legacy.viewport;
+    delete legacy.profileId;
 
-    expect(
-      normalizeBrowserIndexState({ browsersById: { b1: legacy } }).browsersById.b1?.viewport,
-    ).toEqual({ mode: "responsive" });
+    const normalized = normalizeBrowserIndexState({ browsersById: { b1: legacy } });
+    expect(normalized.browsersById.b1?.viewport).toEqual({ mode: "responsive" });
+    expect(normalized.browsersById.b1?.profileId).toBe("default");
   });
 });

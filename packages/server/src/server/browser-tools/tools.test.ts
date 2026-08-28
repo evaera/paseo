@@ -100,6 +100,8 @@ function listTabsPayload(): Extract<BrowserToolsResponsePayload, { ok: true }> {
       tabs: [
         {
           browserId: BROWSER_ID,
+          profileId: "default",
+          profileName: "Default",
           url: "https://example.com",
           title: "Example",
           isActive: true,
@@ -119,6 +121,8 @@ function newTabPayload(): Extract<BrowserToolsResponsePayload, { ok: true }> {
       browserId: BROWSER_ID,
       workspaceId: "wks_workspace_a",
       url: "https://example.com",
+      profileId: "default",
+      profileName: "Default",
     },
   };
 }
@@ -538,6 +542,9 @@ describe("registerBrowserTools", () => {
     const harness = new BrowserToolHarness();
 
     expect(harness.toolNames()).toEqual([
+      "browser_list_profiles",
+      "browser_create_profile",
+      "browser_delete_profile",
       "browser_list_tabs",
       "browser_new_tab",
       "browser_snapshot",
@@ -579,7 +586,7 @@ describe("registerBrowserTools", () => {
     expect(response.content).toEqual([
       {
         type: "text",
-        text: `Found 1 Paseo browser tab. Use these browserId values for tab-scoped browser tools.\n- browserId=${BROWSER_ID} active title="Example" url=https://example.com`,
+        text: `Found 1 Paseo browser tab. Use these browserId values for tab-scoped browser tools.\n- browserId=${BROWSER_ID} active profileId=default profileName="Default" title="Example" url=https://example.com`,
       },
     ]);
   });
@@ -598,6 +605,29 @@ describe("registerBrowserTools", () => {
         command: { command: "new_tab", args: { url: "https://example.com" } },
       },
     ]);
+    expect(response.content).toEqual([
+      {
+        type: "text",
+        text: `Created browser tab browserId=${BROWSER_ID} profileId=default profileName="Default" url=https://example.com. Use this browserId for tab-scoped browser tools and profileId to open another tab in the same profile.`,
+      },
+    ]);
+  });
+
+  test("new tab summarizes an old host response without profile metadata", async () => {
+    const harness = new BrowserToolHarness();
+    harness.broker.setResponse({
+      requestId: "req-new-tab",
+      ok: true,
+      result: {
+        command: "new_tab",
+        browserId: BROWSER_ID,
+        workspaceId: "wks_workspace_a",
+        url: "https://example.com",
+      },
+    });
+
+    const response = await harness.execute("browser_new_tab", {});
+
     expect(response.content).toEqual([
       {
         type: "text",

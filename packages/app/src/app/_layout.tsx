@@ -80,6 +80,7 @@ import { legacyFavoriteProfileMigration } from "@/agent-profiles/migration";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { updateDesktopWindowChrome } from "@/desktop/electron/window";
 import { getDesktopHost } from "@/desktop/host";
+import { removeResidentBrowserWebviewsForProfile } from "@/desktop/browser/resident-webviews";
 import { loadDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { RosettaCalloutSource } from "@/desktop/updates/rosetta-callout-source";
 import { UpdateCalloutSource } from "@/desktop/updates/update-callout-source";
@@ -979,6 +980,17 @@ function RootAppTree() {
 
 export default function RootLayout() {
   useEffect(() => installWebScrollbarStyles(), []);
+  useEffect(() => {
+    if (!getIsElectronRuntime()) return;
+    const unlisten = getDesktopHost()?.events?.on?.(
+      "browser-profile-deleting",
+      removeResidentBrowserWebviewsForProfile,
+    );
+    return () => {
+      if (typeof unlisten === "function") unlisten();
+      else void unlisten?.then((dispose) => dispose());
+    };
+  }, []);
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
       if (nextState !== "active") {

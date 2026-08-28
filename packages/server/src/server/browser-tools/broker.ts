@@ -137,6 +137,20 @@ export class BrowserToolsBroker {
       });
     }
 
+    const requiresUnambiguousProfileHost =
+      request.data.command.command === "list_profiles" ||
+      request.data.command.command === "create_profile" ||
+      request.data.command.command === "delete_profile" ||
+      (request.data.command.command === "new_tab" && request.data.command.args.profile != null);
+    if (requiresUnambiguousProfileHost && this.clients.size > 1) {
+      return browserToolsFailure({
+        requestId,
+        code: "browser_ambiguous_host",
+        message:
+          "Multiple browser hosts are connected. Disconnect all but the target host and retry.",
+      });
+    }
+
     const host = this.selectHostForCommand(request.data.command, requestId);
     if (!host.ok) {
       return host.payload;
@@ -149,6 +163,14 @@ export class BrowserToolsBroker {
     });
     if (unsupported) {
       return unsupported;
+    }
+    const profileUnsupported = this.profileCapabilityUnsupportedFailure({
+      host: host.value,
+      command: request.data.command,
+      requestId,
+    });
+    if (profileUnsupported) {
+      return profileUnsupported;
     }
 
     return this.sendRequest({
@@ -195,6 +217,19 @@ export class BrowserToolsBroker {
     }
     pending.resolve(parsed.data.payload);
     return true;
+  }
+
+  private profileCapabilityUnsupportedFailure(params: {
+    host: RegisteredBrowserHost;
+    command: BrowserAutomationCommand;
+    requestId: string;
+  }): BrowserToolsResponsePayload | null {
+    if (params.command.command !== "new_tab" || params.command.args.profile == null) return null;
+    return this.unsupportedCommandFailure({
+      host: params.host,
+      commandName: "list_profiles",
+      requestId: params.requestId,
+    });
   }
 
   private async executeListTabs(params: {
@@ -456,7 +491,13 @@ export class BrowserToolsBroker {
 }
 
 function getBrowserIdForCommand(command: BrowserAutomationCommand): string | null {
-  if (command.command === "list_tabs" || command.command === "new_tab") {
+  if (
+    command.command === "list_tabs" ||
+    command.command === "list_profiles" ||
+    command.command === "create_profile" ||
+    command.command === "delete_profile" ||
+    command.command === "new_tab"
+  ) {
     return null;
   }
   return command.args.browserId;

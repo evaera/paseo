@@ -124,12 +124,14 @@ class FakeResidentBrowser {
     browserId: string;
     workspaceId: string;
     url: string;
+    profileId?: string;
   }> = [];
 
   public ensure = (input: {
     browserId: string;
     workspaceId: string;
     url: string;
+    profileId?: string;
   }): HTMLElement | null => {
     this.ensuredWebviews.push(input);
     return null;
@@ -325,6 +327,8 @@ describe("mountBrowserAutomationHandler", () => {
     await flushAsyncWork();
 
     const result = newTabResultFrom(browser.client.payloadAt(0));
+    expect(result).toMatchObject({ profileId: "default", profileName: "Default" });
+    expect(result).not.toHaveProperty("profile");
     const openedTabs = workspaceBrowserTabs(workspaceKey, result.browserId);
     const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
     expect(openedTabs).toEqual([
@@ -349,6 +353,7 @@ describe("mountBrowserAutomationHandler", () => {
         browserId: result.browserId,
         workspaceId: "wks_workspace_a",
         url: "https://example.com",
+        profileId: "default",
       },
     ]);
     expect(browser.browser.executedRequests).toEqual([

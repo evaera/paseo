@@ -4,6 +4,7 @@ import { WorkspaceLayoutPlacementSchema } from "../workspace-layout/rpc-schemas.
 export const BrowserAutomationErrorCodeSchema = z.enum([
   "browser_disabled",
   "browser_no_host",
+  "browser_ambiguous_host",
   "browser_tab_not_found",
   "browser_tab_closed",
   "browser_timeout",
@@ -23,6 +24,9 @@ const BROWSER_AUTOMATION_WAIT_CONDITION_MESSAGE =
 
 export const BROWSER_AUTOMATION_COMMAND_NAMES = [
   "list_tabs",
+  "list_profiles",
+  "create_profile",
+  "delete_profile",
   "new_tab",
   "snapshot",
   "click",
@@ -75,12 +79,28 @@ export const BrowserAutomationListTabsCommandSchema = z.object({
   args: z.object({}).strict().default({}),
 });
 
+export const BrowserAutomationListProfilesCommandSchema = z.object({
+  command: z.literal("list_profiles"),
+  args: z.object({}).strict().default({}),
+});
+
+export const BrowserAutomationCreateProfileCommandSchema = z.object({
+  command: z.literal("create_profile"),
+  args: z.object({ name: z.string().trim().min(1).max(80) }).strict(),
+});
+
+export const BrowserAutomationDeleteProfileCommandSchema = z.object({
+  command: z.literal("delete_profile"),
+  args: z.object({ profile: z.string().trim().min(1).max(80) }).strict(),
+});
+
 export const BrowserAutomationNewTabCommandSchema = z.object({
   command: z.literal("new_tab"),
   args: z
     .object({
       url: BrowserAutomationHttpUrlSchema.optional(),
       placement: WorkspaceLayoutPlacementSchema.optional(),
+      profile: z.string().trim().min(1).max(80).optional()
     })
     .strict()
     .default({}),
@@ -235,6 +255,9 @@ export const BrowserAutomationCloseTabCommandSchema = z.object({
 
 export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsCommandSchema,
+  BrowserAutomationListProfilesCommandSchema,
+  BrowserAutomationCreateProfileCommandSchema,
+  BrowserAutomationDeleteProfileCommandSchema,
   BrowserAutomationNewTabCommandSchema,
   BrowserAutomationSnapshotCommandSchema,
   BrowserAutomationClickCommandSchema,
@@ -261,6 +284,8 @@ export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
 export const BrowserAutomationTabInfoSchema = z.object({
   browserId: BrowserAutomationBrowserIdSchema,
   workspaceId: z.string().min(1).optional(),
+  profileId: z.string().min(1).optional(),
+  profileName: z.string().min(1).optional(),
   url: z.string(),
   title: z.string(),
   isActive: z.boolean().default(false),
@@ -274,11 +299,34 @@ export const BrowserAutomationListTabsResultSchema = z.object({
   tabs: z.array(BrowserAutomationTabInfoSchema),
 });
 
+export const BrowserAutomationProfileSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  createdAt: z.number().int().nonnegative(),
+});
+
+export const BrowserAutomationListProfilesResultSchema = z.object({
+  command: z.literal("list_profiles"),
+  profiles: z.array(BrowserAutomationProfileSchema),
+});
+
+export const BrowserAutomationCreateProfileResultSchema = z.object({
+  command: z.literal("create_profile"),
+  profile: BrowserAutomationProfileSchema,
+});
+
+export const BrowserAutomationDeleteProfileResultSchema = z.object({
+  command: z.literal("delete_profile"),
+  profileId: z.string().min(1),
+});
+
 export const BrowserAutomationNewTabResultSchema = z.object({
   command: z.literal("new_tab"),
   browserId: BrowserAutomationBrowserIdSchema,
   workspaceId: z.string().min(1),
   url: z.string().min(1),
+  profileId: z.string().min(1).optional(),
+  profileName: z.string().min(1).optional(),
 });
 
 export const BrowserAutomationSnapshotStatsSchema = z
@@ -459,6 +507,9 @@ export const BrowserAutomationCloseTabResultSchema = z.object({
 
 export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsResultSchema,
+  BrowserAutomationListProfilesResultSchema,
+  BrowserAutomationCreateProfileResultSchema,
+  BrowserAutomationDeleteProfileResultSchema,
   BrowserAutomationNewTabResultSchema,
   BrowserAutomationSnapshotResultSchema,
   BrowserAutomationClickResultSchema,
@@ -508,22 +559,40 @@ export const BrowserAutomationExecuteRequestSchema = z
   })
   .strict();
 
+// zod-aot 0.20.4 emits string switch cases for boolean discriminators, so keep this
+// as a plain union until the generated-code regression is fixed upstream.
+export const BrowserAutomationResponsePayloadSchema = z.union([
+  z.object({
+    requestId: z.string().min(1),
+    ok: z.literal(true),
+    result: BrowserAutomationResultSchema,
+    dialogs: z.array(BrowserAutomationDialogEventSchema).optional(),
+  }),
+  z.object({
+    requestId: z.string().min(1),
+    ok: z.literal(false),
+    error: BrowserAutomationErrorSchema,
+    dialogs: z.array(BrowserAutomationDialogEventSchema).optional(),
+  }),
+]);
+
 export const BrowserAutomationExecuteResponseSchema = z.object({
   type: z.literal("browser.automation.execute.response"),
-  payload: z.discriminatedUnion("ok", [
-    z.object({
-      requestId: z.string().min(1),
-      ok: z.literal(true),
-      result: BrowserAutomationResultSchema,
-      dialogs: z.array(BrowserAutomationDialogEventSchema).optional(),
-    }),
-    z.object({
-      requestId: z.string().min(1),
-      ok: z.literal(false),
-      error: BrowserAutomationErrorSchema,
-      dialogs: z.array(BrowserAutomationDialogEventSchema).optional(),
-    }),
-  ]),
+  payload: BrowserAutomationResponsePayloadSchema,
+});
+
+export const BrowserCommandExecuteRequestSchema = z.object({
+  type: z.literal("browser.command.execute.request"),
+  requestId: z.string().min(1),
+  agentId: z.string().min(1).optional(),
+  cwd: z.string().min(1).optional(),
+  workspaceId: z.string().min(1).optional(),
+  command: BrowserAutomationCommandSchema,
+});
+
+export const BrowserCommandExecuteResponseSchema = z.object({
+  type: z.literal("browser.command.execute.response"),
+  payload: BrowserAutomationResponsePayloadSchema,
 });
 
 export type BrowserAutomationErrorCode = z.infer<typeof BrowserAutomationErrorCodeSchema>;
@@ -541,3 +610,5 @@ export type BrowserAutomationExecuteRequest = z.infer<typeof BrowserAutomationEx
 export type BrowserAutomationExecuteResponse = z.infer<
   typeof BrowserAutomationExecuteResponseSchema
 >;
+export type BrowserCommandExecuteRequest = z.infer<typeof BrowserCommandExecuteRequestSchema>;
+export type BrowserCommandExecuteResponse = z.infer<typeof BrowserCommandExecuteResponseSchema>;

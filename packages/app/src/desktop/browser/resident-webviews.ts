@@ -3,7 +3,7 @@ import {
   type DesktopAttachedBrowserRegistration,
   type DesktopBrowserBridge,
 } from "@/desktop/host";
-import type { BrowserViewport } from "@/desktop/browser/store";
+import { useBrowserStore, type BrowserViewport } from "@/desktop/browser/store";
 import { WEB_SURFACE_PLANE } from "@/lib/overlay-root";
 
 const RESIDENT_BROWSER_HOST_ID = "paseo-browser-resident-webviews";
@@ -24,10 +24,12 @@ interface BrowserWebviewElement extends HTMLElement {
 interface BrowserWebviewIdentity {
   browserId: string;
   workspaceId: string;
+  profileId: string;
 }
 
 export interface BrowserWebviewProfileHost {
   profilePartition: string;
+  profilePartitionFor?: (profileId: string) => string;
   registerAttachedBrowser(input: DesktopAttachedBrowserRegistration): Promise<void>;
 }
 
@@ -66,6 +68,7 @@ function registerBrowserWhenAttached(
       .registerAttachedBrowser({
         browserId: identity.browserId,
         workspaceId: identity.workspaceId,
+        profileId: identity.profileId,
         webContentsId,
       })
       .catch((error) => {
@@ -298,26 +301,36 @@ export function prepareBrowserWebview(
   input: {
     browserId: string;
     workspaceId: string;
+    profileId?: string;
     initialUrl?: string | null;
     profileHost?: BrowserWebviewProfileHost;
   },
 ): void {
   const browser = getBrowserBridge(input.profileHost);
   webview.setAttribute(BROWSER_ID_ATTRIBUTE, input.browserId);
-  webview.setAttribute("partition", browser.profilePartition);
+  const profileId = input.profileId ?? "default";
+  webview.setAttribute(
+    "partition",
+    browser.profilePartitionFor?.(profileId) ?? browser.profilePartition,
+  );
   webview.setAttribute("allowpopups", "true");
   webview.setAttribute("spellcheck", "false");
   webview.setAttribute("autosize", "on");
   if (input.initialUrl) {
     (webview as BrowserWebviewElement).src = input.initialUrl;
   }
-  registerBrowserWhenAttached(webview as BrowserWebviewElement, input, browser);
+  registerBrowserWhenAttached(
+    webview as BrowserWebviewElement,
+    { browserId: input.browserId, workspaceId: input.workspaceId, profileId },
+    browser,
+  );
 }
 
 export function ensureResidentBrowserWebview(input: {
   browserId: string;
   workspaceId: string;
   url: string;
+  profileId?: string;
   profileHost?: BrowserWebviewProfileHost;
 }): HTMLElement | null {
   const browserId = trimNonEmpty(input.browserId);
@@ -347,6 +360,7 @@ export function ensureResidentBrowserWebview(input: {
   prepareBrowserWebview(webview, {
     browserId,
     workspaceId: input.workspaceId,
+    profileId: input.profileId,
     initialUrl: input.url,
     profileHost: input.profileHost,
   });
@@ -422,6 +436,38 @@ export function resizeResidentBrowserWebview(input: {
   }
 
   return dimensions;
+}
+
+export function removeResidentBrowserWebviewsForProfile(
+  payload: unknown,
+  browserState: {
+    browsersById: Record<string, { browserId: string; profileId: string }>;
+  } = useBrowserStore.getState(),
+): void {
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    !("profileId" in payload) ||
+    typeof payload.profileId !== "string"
+  ) {
+    return;
+  }
+  for (const record of Object.values(browserState.browsersById)) {
+    if (record.profileId === payload.profileId) removeResidentBrowserWebview(record.browserId);
+  }
+}
+
+export function recoverBrowserFromProfileListFailure(
+  browserId: string,
+  browserState: {
+    browsersById: Record<string, { browserId: string; profileId: string }>;
+    updateBrowser(browserId: string, patch: { profileId?: string }): void;
+  } = useBrowserStore.getState(),
+): void {
+  const record = browserState.browsersById[browserId];
+  if (!record || record.profileId === "default") return;
+  removeResidentBrowserWebview(browserId);
+  browserState.updateBrowser(browserId, { profileId: "default" });
 }
 
 export function removeResidentBrowserWebview(browserId: string): void {

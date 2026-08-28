@@ -13,6 +13,7 @@ The `browser_*` tools are injected into agents alongside the other [Paseo MCP to
 Shared concepts:
 
 - **`browserId`** identifies a tab. It comes from `browser_new_tab` or `browser_list_tabs` and is required by every tab-scoped tool.
+- **`profileId`** identifies a persistent browser profile. Tab results include both `profileId` and its display-only `profileName`; pass the ID back to `browser_new_tab` when you need the same cookie jar.
 - **`ref`** identifies an element, e.g. `@e3`. Refs come from the latest `browser_snapshot` of the same tab and expire when the page changes — stale refs return an error instead of acting on the wrong element.
 - Every result reports **dialogs** the page opened during the command (alerts accepted; confirm/prompt/beforeunload dismissed).
 
@@ -22,10 +23,20 @@ Arguments marked `?` are optional.
 
 | Tool                | Arguments                  | Purpose                                                                   |
 | ------------------- | -------------------------- | ------------------------------------------------------------------------- |
-| `browser_list_tabs` | —                          | List open tabs in the agent's workspace across connected hosts.           |
-| `browser_new_tab`   | `url?`                     | Open a tab in the background and return its `browserId`.                  |
+| `browser_list_tabs` | —                          | List open tabs with their `browserId`, `profileId`, and `profileName`.    |
+| `browser_new_tab`   | `url?, profile?`           | Open a background tab, optionally using a profile name or ID.             |
 | `browser_close_tab` | `browserId`                | Close a tab and clean up its webview.                                     |
 | `browser_resize`    | `browserId, width, height` | Resize the tab's viewport — check a layout at phone or tablet dimensions. |
+
+## Profiles
+
+Profiles isolate cookies, logins, caches, and site storage. `Default` is always present and cannot be deleted. Creating and deleting profiles requires one connected desktop browser host. Deletion opens a native confirmation on that host, including when an agent or CLI requested it.
+
+| Tool                     | Arguments | Purpose                                                     |
+| ------------------------ | --------- | ----------------------------------------------------------- |
+| `browser_list_profiles`  | —         | List profile names and IDs, with Default first.             |
+| `browser_create_profile` | `name`    | Create an empty persistent profile.                         |
+| `browser_delete_profile` | `profile` | Request deletion by name or ID, including all browser data. |
 
 ## Reading the page
 

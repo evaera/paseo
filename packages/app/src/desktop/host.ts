@@ -141,12 +141,24 @@ export interface DesktopBrowserNewTabRequestEvent {
 export interface DesktopAttachedBrowserRegistration {
   browserId: string;
   workspaceId: string;
+  profileId?: string;
   webContentsId: number;
+}
+
+export interface DesktopBrowserProfile {
+  id: string;
+  name: string;
+  createdAt: number;
+  partition: string;
 }
 
 export interface DesktopBrowserBridge {
   setShortcutPolicy?: (input: BrowserKeyboardPolicy) => Promise<void>;
   readonly profilePartition?: string;
+  profilePartitionFor?: (profileId: string) => string;
+  listProfiles?: () => Promise<DesktopBrowserProfile[]>;
+  createProfile?: (name: string) => Promise<DesktopBrowserProfile>;
+  deleteProfile?: (profileId: string) => Promise<boolean>;
   registerAttachedBrowser?: (input: DesktopAttachedBrowserRegistration) => Promise<void>;
   unregisterWorkspaceBrowser?: (browserId: string) => Promise<void>;
   setWorkspaceActiveBrowser?: (input: {

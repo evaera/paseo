@@ -49,13 +49,31 @@ class FakeBrowserGuest {
 }
 
 describe("browser webview attachment", () => {
-  test("accepts only allowed URLs on the shared profile partition", () => {
+  test("accepts only allowed URLs on a desktop-owned profile partition", () => {
     expect(
       isPaseoBrowserWebviewAttach({
         src: "https://example.com",
         partition: PASEO_BROWSER_PROFILE_PARTITION,
       }),
     ).toBe(true);
+    expect(
+      isPaseoBrowserWebviewAttach(
+        {
+          src: "https://example.com",
+          partition: "persist:paseo-browser-profile-owned",
+        },
+        (partition) => partition === "persist:paseo-browser-profile-owned",
+      ),
+    ).toBe(true);
+    expect(
+      isPaseoBrowserWebviewAttach(
+        {
+          src: "https://example.com",
+          partition: "persist:paseo-browser-profile-valid-looking-but-unowned",
+        },
+        () => false,
+      ),
+    ).toBe(false);
     expect(
       isPaseoBrowserWebviewAttach({
         src: "https://example.com",

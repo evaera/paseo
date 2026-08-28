@@ -18,6 +18,7 @@ Typical uses:
 - **Reproduce and diagnose bugs.** Click the exact sequence from a bug report, then read the console and network logs.
 - **Exercise full flows.** Forms, multi-step wizards, hover menus, drag and drop, file uploads.
 - **Work in logged-in sessions.** Tabs keep their session state. Log in once yourself, and the agent can work behind the login.
+- **Separate identities.** Create named browser profiles when different tabs need separate cookies, logins, caches, and site storage. `browser_new_tab` accepts a profile name or ID and returns both `profileId` and `profileName`.
 
 Because you share the browser with the agent, you can watch it work — and step in at any point.
 
@@ -70,6 +71,7 @@ agent ──MCP──▶ daemon (broker) ──▶ browser host (desktop app) �
 
 - **Workspace-scoped tabs.** An agent only sees and controls tabs in its own workspace. New tabs open in the background without stealing your focus.
 - **Tab-to-host routing.** The daemon remembers which host owns each tab and routes tab commands there. `browser_list_tabs` aggregates all connected hosts.
+- **Desktop-owned profiles.** Default keeps the original Paseo browser data. Named profiles use isolated persistent Electron sessions. Default cannot be deleted, and every profile deletion requires confirmation in a native desktop dialog, even when requested through MCP or the CLI.
 - **Trusted input.** Clicks, keys, hovers, and drags are dispatched as real browser input events — CSS `:hover` triggers, and pages can't tell an agent's click from a user's. Every action first waits for its target to be visible, enabled, and stable.
 - **Dialogs never block.** `alert` is accepted; `confirm`, `prompt`, and `beforeunload` are dismissed. Every handled dialog is reported in the tool result so the agent knows the page flow changed.
 
@@ -77,6 +79,6 @@ agent ──MCP──▶ daemon (broker) ──▶ browser host (desktop app) �
 
 - Navigation is restricted to `http(s)` URLs.
 - File uploads can only reference files inside the agent's workspace.
-- Tabs share the browser profile you use in Paseo, including cookies and logins — that's what makes logged-in testing work, and why the feature is opt-in per host.
+- Tabs use the selected Paseo browser profile, including its cookies and logins. Named profiles keep that browser data isolated from Default and from one another.
 
 See the [tools reference](/docs/browser-tools) for the full tool list.
