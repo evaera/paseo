@@ -868,7 +868,12 @@ async function smokePackagedDesktopApp({ appPath }) {
     });
     page = await waitForPackagedAppPage(browser, deadline);
     await assertPackagedRendererLoaded(page, deadline);
-    console.log("Packaged desktop smoke: real app renderer and preload bridge loaded");
+    if (!isRunning(child)) {
+      throw new Error("Packaged app exited while loading desktop main dependencies");
+    }
+    console.log(
+      "Packaged desktop smoke: real app renderer, preload bridge, and browser-import native dependency loaded",
+    );
     const status = await waitForRendererStartedDaemon({
       page,
       daemonHome,

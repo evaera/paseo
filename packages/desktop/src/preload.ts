@@ -128,6 +128,11 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:browser:open-devtools", browserId),
     clearProfile: (legacyBrowserIds: string[]) =>
       ipcRenderer.invoke("paseo:browser:clear-profile", legacyBrowserIds),
+    listImportSources: () => ipcRenderer.invoke("paseo:browser:import-sources"),
+    importBrowserData: (request: Record<string, unknown>) =>
+      ipcRenderer.invoke("paseo:browser:import-data", request),
+    cancelBrowserDataImport: (operationId: string) =>
+      ipcRenderer.invoke("paseo:browser:import-cancel", operationId),
     executeAutomationCommand: (request: Record<string, unknown>) =>
       ipcRenderer.invoke("paseo:browser:execute-automation-command", request),
     captureElement: (
