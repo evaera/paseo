@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WorkspaceLayoutPlacementSchema } from "../workspace-layout/rpc-schemas.js";
 
 export const BrowserAutomationErrorCodeSchema = z.enum([
   "browser_disabled",
@@ -79,6 +80,7 @@ export const BrowserAutomationNewTabCommandSchema = z.object({
   args: z
     .object({
       url: BrowserAutomationHttpUrlSchema.optional(),
+      placement: WorkspaceLayoutPlacementSchema.optional(),
     })
     .strict()
     .default({}),

@@ -1,10 +1,27 @@
-import { beforeEach, describe, expect, test } from "vitest";
+/** @vitest-environment jsdom */
+import { beforeEach, describe, expect, test, vi } from "vitest";
+
+vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
+vi.mock("@/panels/panel-manifest", () => ({
+  panelResourceKey: (target: unknown) => JSON.stringify(target),
+  panelSupportsHost: () => true,
+}));
+vi.mock("@/plugins/workspace-panels/locations", () => ({
+  panelTargetSupportsHostForWorkspaceKey: () => true,
+}));
+vi.mock("@react-native-async-storage/async-storage", () => ({
+  default: {
+    getItem: vi.fn(async () => null),
+    setItem: vi.fn(async () => undefined),
+    removeItem: vi.fn(async () => undefined),
+  },
+}));
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { createJSONStorage, type StateStorage } from "zustand/middleware";
 import { mountBrowserAutomationHandler } from "./handler";
 import type { DesktopHostBridge } from "@/desktop/host";
 import { useBrowserStore } from "@/desktop/browser/store";
-import { findPaneById } from "@/stores/workspace-layout-actions";
+import { collectAllPanes, findPaneById } from "@/stores/workspace-layout-actions";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 
@@ -276,7 +293,13 @@ useWorkspaceLayoutStore.persist.setOptions({
 });
 
 describe("mountBrowserAutomationHandler", () => {
+  let idSequence = 0;
+
   beforeEach(() => {
+    vi.spyOn(globalThis.crypto, "randomUUID").mockImplementation(
+      () =>
+        `00000000-0000-4000-8000-${String(++idSequence).padStart(12, "0")}` as `${string}-${string}-${string}-${string}-${string}`,
+    );
     browserAutomationStorage.clear();
     useBrowserStore.setState({ browsersById: {} });
     useWorkspaceLayoutStore.setState({ layoutByWorkspace: {} });
@@ -337,6 +360,39 @@ describe("mountBrowserAutomationHandler", () => {
         command: { command: "list_tabs", args: {} },
       },
     ]);
+  });
+
+  test("browser_new_tab can create a right split without stealing focus", async () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    const workspaceKey = buildWorkspaceTabPersistenceKey({
+      serverId: "server-1",
+      workspaceId: "wks_workspace_a",
+    })!;
+    useWorkspaceLayoutStore.getState().openTab({
+      workspaceKey,
+      target: { kind: "draft", draftId: "human-draft" },
+      intent: "reveal",
+    });
+    browser.mount({ serverId: "server-1" });
+    const request = browserNewTabRequest();
+    request.command = {
+      command: "new_tab",
+      args: {
+        url: "https://example.com",
+        placement: { mode: "split", targetPaneId: "main", position: "right" },
+      },
+    };
+    browser.receive(request);
+    await flushAsyncWork();
+
+    const result = newTabResultFrom(browser.client.payloadAt(0));
+    const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]!;
+    const browserTab = workspaceBrowserTabs(workspaceKey, result.browserId)[0]!;
+    const browserPane = collectAllPanes(layout.root).find((pane) =>
+      pane.tabIds.includes(browserTab.tabId),
+    );
+    expect(browserPane?.id).not.toBe("main");
+    expect(layout.focusedPaneId).toBe("main");
   });
 
   test("browser_new_tab returns a retryable timeout when the resident webview does not register", async () => {

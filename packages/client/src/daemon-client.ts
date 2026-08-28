@@ -157,6 +157,11 @@ import type {
   BrowserAutomationExecuteRequest,
   BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import {
+  WorkspaceLayoutExecuteRequestSchema,
+  type WorkspaceLayoutCommand,
+  type WorkspaceLayoutExecuteResponse,
+} from "@getpaseo/protocol/workspace-layout/rpc-schemas";
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -4745,6 +4750,43 @@ export class DaemonClient {
 
   sendBrowserAutomationExecuteResponse(response: BrowserAutomationExecuteResponse): void {
     this.sendSessionMessageStrict(response);
+  }
+
+  sendWorkspaceLayoutExecuteResponse(response: WorkspaceLayoutExecuteResponse): void {
+    this.sendSessionMessageStrict(response);
+  }
+
+  async executeWorkspaceLayout(options: {
+    workspaceId: string;
+    command: WorkspaceLayoutCommand;
+    agentId?: string;
+    hostInstanceId?: string;
+    requestId?: string;
+    timeout?: number;
+  }): Promise<WorkspaceLayoutExecuteResponse["payload"]> {
+    // COMPAT(workspaceLayouts): added in v0.8.0, remove after 2027-09-01.
+    if (this.lastServerInfoMessage?.features?.workspaceLayouts !== true) {
+      throw new Error("Update the host to inspect or manage workspace layouts.");
+    }
+    const requestId = this.createRequestId(options.requestId);
+    const message = WorkspaceLayoutExecuteRequestSchema.parse({
+      type: "workspace.layout.execute.request",
+      requestId,
+      workspaceId: options.workspaceId,
+      ...(options.agentId ? { agentId: options.agentId } : {}),
+      ...(options.hostInstanceId ? { hostInstanceId: options.hostInstanceId } : {}),
+      command: options.command,
+    });
+    return this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      select: (response) =>
+        response.type === "workspace.layout.execute.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
   }
 
   async readProjectConfig(repoRoot: string, requestId?: string): Promise<ReadProjectConfigPayload> {

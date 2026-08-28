@@ -883,7 +883,7 @@ test("sends new-agent run options when updating schedules", async () => {
   });
 });
 
-test("sends typed browser automation execute responses", async () => {
+test("sends typed client-local control responses", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
 
@@ -909,14 +909,57 @@ test("sends typed browser automation execute responses", async () => {
     },
   });
 
-  expect(parseSentFrame(mock.sent[0])).toEqual({
-    type: "browser.automation.execute.response",
+  client.sendWorkspaceLayoutExecuteResponse({
+    type: "workspace.layout.execute.response",
     payload: {
-      requestId: "req-1",
+      status: "success",
+      requestId: "layout-1",
+      hostInstanceId: "host-1",
       ok: true,
-      result: { command: "list_tabs", tabs: [] },
+      result: {
+        command: "get_layout",
+        layout: {
+          workspaceId: "workspace-1",
+          focusedPaneId: null,
+          root: {
+            kind: "pane",
+            pane: { paneId: "pane-1", focusedTabId: null, tabs: [] },
+          },
+        },
+      },
     },
   });
+
+  expect(mock.sent.map(parseSentFrame)).toEqual([
+    {
+      type: "browser.automation.execute.response",
+      payload: {
+        requestId: "req-1",
+        ok: true,
+        result: { command: "list_tabs", tabs: [] },
+      },
+    },
+    {
+      type: "workspace.layout.execute.response",
+      payload: {
+        status: "success",
+        requestId: "layout-1",
+        hostInstanceId: "host-1",
+        ok: true,
+        result: {
+          command: "get_layout",
+          layout: {
+            workspaceId: "workspace-1",
+            focusedPaneId: null,
+            root: {
+              kind: "pane",
+              pane: { paneId: "pane-1", focusedTabId: null, tabs: [] },
+            },
+          },
+        },
+      },
+    },
+  ]);
 });
 
 test("does not reconnect after close when ensureConnected is called", async () => {

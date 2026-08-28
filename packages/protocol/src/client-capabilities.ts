@@ -28,6 +28,7 @@ export const CLIENT_CAPS = {
   // reconstructed timeline replay after 2027-02-21 once the client floor supports invalidation.
   timelineReplacementInvalidation: "timeline_replacement_invalidation",
   browserHost: "browser_host",
+  workspaceLayoutHost: "workspace_layout_host",
 } as const;
 
 export type ClientCapability = (typeof CLIENT_CAPS)[keyof typeof CLIENT_CAPS];

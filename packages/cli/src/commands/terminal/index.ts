@@ -6,6 +6,7 @@ import { runCreateCommand } from "./create.js";
 import { runKillCommand } from "./kill.js";
 import { runLsCommand } from "./ls.js";
 import { runSendKeysCommand } from "./send-keys.js";
+import { parsePosition } from "../layout/index.js";
 
 export function createTerminalCommand(): Command {
   const terminal = new Command("terminal").description("Manage workspace terminals");
@@ -23,7 +24,15 @@ export function createTerminalCommand(): Command {
       .command("create")
       .description("Create a terminal")
       .option("--cwd <path>", "Workspace directory")
-      .option("--name <name>", "Terminal name"),
+      .option("--name <name>", "Terminal name")
+      .option("--pane <pane-id>", "Open the terminal tab in an existing pane")
+      .option(
+        "--split <position>",
+        "Open in a new left, right, top, or bottom split",
+        parsePosition,
+      )
+      .option("--target-pane <pane-id>", "Pane to split when using --split")
+      .option("--host-instance <id>", "Connected layout host instance ID"),
   ).action(withOutput(runCreateCommand));
 
   addJsonAndDaemonHostOptions(

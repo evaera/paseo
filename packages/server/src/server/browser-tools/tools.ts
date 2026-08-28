@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BrowserAutomationBrowserIdSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import { WorkspaceLayoutPlacementSchema } from "@getpaseo/protocol/workspace-layout/rpc-schemas";
 import type { BrowserToolsBroker } from "./broker.js";
 import type { BrowserToolsResponsePayload } from "./errors.js";
 import type {
@@ -96,12 +97,13 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
     {
       title: "Create browser tab",
       description:
-        "Create a new Paseo browser tab in this agent's workspace on the most recently connected browser automation host, opened in the background without switching the user's view. Pass an http(s) URL or a scheme-less host URL, which is treated as http; the returned browserId is used by tab-scoped tools.",
+        "Create a new Paseo browser tab in this agent's workspace on a connected browser automation host, opened in the background without switching the user's view. Pass placement mode split with a target pane ID and right position to open it in a new right split. Pass an http(s) URL or a scheme-less host URL, which is treated as http; the returned browserId is used by tab-scoped tools.",
       inputSchema: {
         url: BrowserHttpUrlInputSchema.optional(),
+        placement: WorkspaceLayoutPlacementSchema.optional(),
       },
     },
-    async ({ url }) => {
+    async ({ url, placement }) => {
       const context = resolveBrowserToolContext(options);
       const missingWorkspace = requireWorkspaceContext(context);
       if (missingWorkspace) {
@@ -113,7 +115,10 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
         command: {
           command: "new_tab",
-          args: url ? { url } : {},
+          args: {
+            ...(url ? { url } : {}),
+            ...(placement ? { placement } : {}),
+          },
         },
       });
       return browserToolResult({ payload, context });

@@ -9,6 +9,7 @@ import { createScheduleCommand } from "./commands/schedule/index.js";
 import { createSpeechCommand } from "./commands/speech/index.js";
 import { createScriptCommand } from "./commands/script/index.js";
 import { createTerminalCommand } from "./commands/terminal/index.js";
+import { createLayoutCommand } from "./commands/layout/index.js";
 import { createWorktreeCommand } from "./commands/worktree/index.js";
 import { createWorkspaceCommand } from "./commands/workspace/index.js";
 import { createHeartbeatCommand } from "./commands/heartbeat/index.js";
@@ -176,6 +177,7 @@ export function createCli(): Command {
 
   // Terminal commands
   program.addCommand(createTerminalCommand());
+  program.addCommand(createLayoutCommand());
 
   // Workspace script commands
   program.addCommand(createScriptCommand());

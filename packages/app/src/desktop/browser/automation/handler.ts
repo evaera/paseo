@@ -336,11 +336,46 @@ async function openBrowserTabForRequest(params: {
       message: "Cannot create a browser tab without a workspace context.",
     });
   }
-  useWorkspaceLayoutStore.getState().openTab({
+  const layoutStore = useWorkspaceLayoutStore.getState();
+  const previouslyFocusedPaneId = layoutStore.layoutByWorkspace[workspaceKey]?.focusedPaneId;
+  const placement = command.args.placement;
+  const tabPlacement =
+    placement?.mode === "split"
+      ? ({ mode: "pane", paneId: placement.targetPaneId } as const)
+      : placement;
+  const tabId = layoutStore.openTab({
     workspaceKey,
     target: { kind: "browser", browserId },
     intent: "background",
+    ...(tabPlacement ? { placement: tabPlacement } : {}),
   });
+  if (!tabId) {
+    useBrowserStore.getState().removeBrowser(browserId);
+    return browserAutomationFailure({
+      requestId: request.requestId,
+      code: "browser_unknown_error",
+      message: "Could not place the browser tab in the requested pane.",
+    });
+  }
+  if (placement?.mode === "split") {
+    const splitPaneId = layoutStore.splitPane(workspaceKey, {
+      tabId,
+      targetPaneId: placement.targetPaneId,
+      position: placement.position,
+    });
+    if (!splitPaneId) {
+      layoutStore.closeTab(workspaceKey, tabId);
+      useBrowserStore.getState().removeBrowser(browserId);
+      return browserAutomationFailure({
+        requestId: request.requestId,
+        code: "browser_unknown_error",
+        message: "Could not create the requested browser split.",
+      });
+    }
+    if (previouslyFocusedPaneId) {
+      layoutStore.focusPane(workspaceKey, previouslyFocusedPaneId);
+    }
+  }
 
   if (browserHost?.executeAutomationCommand) {
     ensureResidentBrowserWebview({ browserId, workspaceId, url: normalizedUrl });
