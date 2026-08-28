@@ -546,7 +546,9 @@ export const BrowserAutomationExecuteRequestSchema = z
   })
   .strict();
 
-export const BrowserAutomationResponsePayloadSchema = z.discriminatedUnion("ok", [
+// zod-aot 0.20.4 emits string switch cases for boolean discriminators, so keep this
+// as a plain union until the generated-code regression is fixed upstream.
+export const BrowserAutomationResponsePayloadSchema = z.union([
   z.object({
     requestId: z.string().min(1),
     ok: z.literal(true),
