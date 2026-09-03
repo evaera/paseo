@@ -138,6 +138,8 @@ steps:
 
 Use `github.issue_comment_created` for an issue discussion and `github.pull_request_comment_created` for a pull-request conversation. A comment on a changed line is a diff comment, covered by the legacy `github.pull_request_review_comment` event.
 
+When a step opts into `${{ paseo.context }}`, `github.actor.login` is the login that triggered the webhook. It comes from GitHub's webhook sender and is intentionally separate from `github.item.author.login`, which identifies the issue or pull-request author. Use `github.actor.login` when the agent must attribute the current request.
+
 For `github.issue_comment_created`, `github.pull_request_comment_created`, `github.issue_comment`, and `github.pull_request_review_comment`, Hub reacts with 👀 when it accepts the delivery, 🚀 when the agent starts, 👍 on completion, and 👎 on failure.
 
 ## Start work when an issue becomes ready

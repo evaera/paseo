@@ -231,6 +231,8 @@ prompt:
 
 `${{ paseo.context }}` opts that step into provider context materialization and renders the result as JSON in the prompt. It is available only in prompt text. Hub does not inject it unless the workflow authors that expression.
 
+`${{ paseo.agent.provider }}` and `${{ paseo.agent.model }}` render the provider and model from the agent selected for that step. They are available only in prompt text. If the agent does not specify a model, `paseo.agent.model` is `null` because the daemon owns model selection.
+
 Includes resolve relative to `.paseo/workflows/`, so shared partials use `partials/<name>.md`. Missing files, absolute or traversing paths, symlinks, content mismatches, and files outside the partial tree are rejected.
 
 ### Output capabilities

@@ -185,6 +185,7 @@ prompt:
 
 - `${{ paseo.prompt }}` is normalized request text. It is always explicit in the authored prompt.
 - `${{ paseo.context }}` opts this step into provider context materialization and inserts JSON. Without that expression, Hub does not fetch or inject ambient context.
+- `${{ paseo.agent.provider }}` and `${{ paseo.agent.model }}` expose the agent selected for this step. Use them for runtime-aware text such as `Posted by ${{ paseo.agent.model }}`. The model is `null` when its selection is delegated to the daemon.
 
 Keep untrusted request text in a clearly delimited block. A partial is instruction text, not hidden authority.
 
