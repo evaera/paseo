@@ -47,6 +47,11 @@ export interface PiRuntimeSession {
     images: Array<{ type: "image"; data: string; mimeType: string }> | undefined,
     streamingBehavior: PiStreamingBehavior,
   ): Promise<PiPromptAck>;
+  steer(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void>;
+  clearQueue(): Promise<void>;
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;
