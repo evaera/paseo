@@ -61,7 +61,7 @@ Paseo tools are not implemented as MCP tools internally. They live in a shared t
 
 A provider that can register runtime tools directly should set `supportsNativePaseoTools: true` and consume the already-filtered `launchContext.paseoTools` in `createSession`/`resumeSession`. When native tools are present, `AgentManager` strips the internal Paseo MCP server from the provider launch config so the provider does not receive the same tools twice. Providers that only know MCP should keep `supportsMcpServers: true` and let the daemon inject `/mcp/agents`; the MCP server builds the same policy-filtered catalog for that caller. Filtering is enforced at catalog registration in both paths. Browser tools remain subject to the daemon browser-tools setting and browser-host availability.
 
-Pi is a process-backed provider. Paseo requires the user to have the `pi` binary installed and talks to it through `pi --mode rpc`; the server package does not embed Pi's SDK/runtime packages. Every Pi prompt RPC carries an explicit `streamingBehavior`: normal prompts and integration commands use `followUp`, while the active-turn steering path selected by the user's send behavior uses Pi's native `steer`. This avoids relying on Pi's busy-session default, which rejects prompts without an explicit behavior, and preserves the user's choice between interrupting and steering an active turn.
+Pi is a process-backed provider. Paseo requires the user to have the `pi` binary installed and talks to it through `pi --mode rpc`; the server package does not embed Pi's SDK/runtime packages.
 
 Paseo's per-agent and daemon-wide system prompts are appended by its generated Pi integration extension. Paseo deliberately does not pass `--append-system-prompt`, because that flag replaces Pi's automatic `APPEND_SYSTEM.md` discovery instead of composing with it.
 
@@ -72,14 +72,6 @@ Pi MCP support depends on the open-source `pi-mcp-adapter` extension being loade
 Pi control-plane RPCs wait 60 seconds by default. Override `params.rpcTimeoutMs` when extension or MCP startup on a slow host needs more time. Timeout errors name the pending RPC phase and report both elapsed time and the configured deadline. This setting does not govern long-running Pi compaction or Pi extension UI results. See [OMP profiles and Pi-compatible forks](custom-providers.md#omp-profiles-and-pi-compatible-forks) for OMP startup and RPC deadlines.
 
 Pi import discovery reads Pi's persisted JSONL session files because Pi RPC does not expose a recent-session listing command. Resume and full history hydration still go through `pi --mode rpc` using the session file as `nativeHandle`.
-
-Pi extension custom messages remain in Pi's native session and model context, but not every custom
-message belongs in Paseo's transcript. The Pi provider suppresses pi-subagents completion, failure,
-progress, attention, and supervisor-decision control reports from both live projection and history
-replay. Prefer the `subagent-notify`, `subagent_control_notice`, `subagent_steering_notice`,
-`subagent_supervisor_request`, and `subagent_watchdog_warning` custom types; use the exact report
-opener only when Pi RPC omits that metadata. Other extension custom messages and user messages
-remain visible.
 
 OMP is a first-class built-in provider, disabled by default. Its launch contract, typed runtime, agent/session behavior, history, permissions, imports, and test fake live under `providers/omp/`; only the provider-neutral JSONL child-process transport is shared with Pi. It launches `omp --mode rpc-ui`, uses OMP's `get_available_commands` RPC for slash-command discovery, bridges OMP `rpc-ui` approval dialogs into Paseo permissions, and imports terminal-started sessions from `~/.omp/agent/sessions` when enabled.
 

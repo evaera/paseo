@@ -63,7 +63,6 @@ import {
   streamPiHistory,
   type PiCapturedUserMessageEntry,
 } from "./history-mapper.js";
-import { shouldProjectPiCustomMessage } from "./message-projection.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { revertPiConversation } from "./rewind.js";
@@ -77,7 +76,6 @@ import type {
   PiRpcSlashCommand,
   PiRuntimeEvent,
   PiSessionState,
-  PiStreamingBehavior,
   PiThinkingLevel,
 } from "./rpc-types.js";
 import { PiUsagePoller, type PiUsagePollScheduler } from "./usage-poller.js";
@@ -99,7 +97,6 @@ const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
 const PASEO_PI_SUBMITTED_USER_ENTRY_MARKER = "PASEO_SUBMITTED_USER_ENTRY";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
 const DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS = 30_000;
-const MAX_PENDING_PI_SUBMITTED_PROMPTS = 256;
 const DEFAULT_PI_RPC_TIMEOUT_MS = 60_000;
 const QUESTION_RESPONSE_HEADER = "Response";
 const QUESTION_COMMENT_HEADER = "Comment";
@@ -1238,11 +1235,6 @@ export class PiRpcAgentSession implements AgentSession {
   private pendingCombinedAskUserResponse: PendingCombinedAskUserResponse | null = null;
   private activeTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
-  private readonly pendingSubmittedPrompts: Array<{
-    token: string;
-    text: string;
-    clientMessageId: string | null;
-  }> = [];
   private activeAssistantMessageId: string | null = null;
   private activeTurnStarted = false;
   private activeTurnStartedEmitted = false;
@@ -1333,7 +1325,6 @@ export class PiRpcAgentSession implements AgentSession {
       throw new Error("A Pi turn is already active");
     }
 
-    this.clearPendingSubmittedPrompts();
     const payload = convertPromptInput(prompt, { model: this.state.model });
     const turnId = randomUUID();
     this.activeTurnId = turnId;
@@ -1352,12 +1343,7 @@ export class PiRpcAgentSession implements AgentSession {
 
     void (async () => {
       try {
-        const ack = await this.sendUserPrompt(
-          payload,
-          "followUp",
-          options?.clientMessageId ?? null,
-          true,
-        );
+        const ack = await this.runtimeSession.prompt(payload.text, payload.images);
         this.activePromptRequestId = ack.requestId ?? null;
         const correlatedResult = ack.requestId
           ? this.pendingPromptResults.get(ack.requestId)
@@ -1386,7 +1372,6 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeAssistantMessageId = null;
         this.pendingSteerSubmissions.length = 0;
         this.clearNoTurnBuffers();
-        this.clearPendingSubmittedPrompts();
         if (isPiRequestAbortError(error)) {
           this.emit({
             type: "turn_canceled",
@@ -1446,8 +1431,6 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private async clearPendingPermissionsForSteer(): Promise<void> {
-    this.activeAskUserDialog = null;
-    this.pendingCombinedAskUserResponse = null;
     const requestIds = Array.from(this.pendingExtensionUiRequests.keys());
     for (const requestId of requestIds) {
       if (!this.pendingExtensionUiRequests.has(requestId)) continue;
@@ -1466,6 +1449,7 @@ export class PiRpcAgentSession implements AgentSession {
     const [submission] = this.pendingSteerSubmissions.splice(index, 1);
     return submission;
   }
+
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
     return () => {
@@ -1570,7 +1554,6 @@ export class PiRpcAgentSession implements AgentSession {
       }
       await this.runtimeSession.abort();
     } catch (error) {
-      this.clearPendingSubmittedPrompts();
       if (this.interruptingTurnId === turnId) {
         this.interruptingTurnId = null;
       }
@@ -1586,7 +1569,6 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeAssistantMessageId = null;
         this.pendingSteerSubmissions.length = 0;
         this.clearNoTurnBuffers();
-        this.clearPendingSubmittedPrompts();
         this.emit({
           type: "turn_failed",
           provider: this.provider,
@@ -1596,7 +1578,6 @@ export class PiRpcAgentSession implements AgentSession {
       }
       throw error;
     }
-    this.clearPendingSubmittedPrompts();
     if (turnId && this.activeTurnId === turnId) {
       this.usagePoller.stopTurn();
       this.activeTurnId = null;
@@ -1607,7 +1588,6 @@ export class PiRpcAgentSession implements AgentSession {
       this.activeAssistantMessageId = null;
       this.pendingSteerSubmissions.length = 0;
       this.clearNoTurnBuffers();
-      this.clearPendingSubmittedPrompts();
       this.emit({
         type: "turn_canceled",
         provider: this.provider,
@@ -1647,11 +1627,7 @@ export class PiRpcAgentSession implements AgentSession {
     const requestId = randomUUID();
     const resultPromise = this.waitForExtensionResult(requestId);
     const payload = Buffer.from(JSON.stringify({ targetId, requestId })).toString("base64url");
-    await this.runtimeSession.prompt(
-      `/${PASEO_PI_TREE_EXTENSION_COMMAND} ${payload}`,
-      undefined,
-      "followUp",
-    );
+    await this.runtimeSession.prompt(`/${PASEO_PI_TREE_EXTENSION_COMMAND} ${payload}`);
     return await resultPromise;
   }
 
@@ -1664,7 +1640,6 @@ export class PiRpcAgentSession implements AgentSession {
     try {
       await this.runtimeSession.close();
     } finally {
-      this.clearPendingSubmittedPrompts();
       this.rejectAllExtensionResults(new Error("Pi session closed"));
       this.cleanup?.();
     }
@@ -1739,43 +1714,6 @@ export class PiRpcAgentSession implements AgentSession {
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }
-  }
-
-  private async sendUserPrompt(
-    payload: PiPromptPayload,
-    streamingBehavior: PiStreamingBehavior,
-    clientMessageId: string | null,
-    trackSubmittedEntry: boolean,
-  ) {
-    const pending = trackSubmittedEntry
-      ? { token: randomUUID(), text: payload.text, clientMessageId }
-      : null;
-    if (pending) {
-      this.pendingSubmittedPrompts.push(pending);
-      if (this.pendingSubmittedPrompts.length > MAX_PENDING_PI_SUBMITTED_PROMPTS) {
-        this.pendingSubmittedPrompts.splice(
-          0,
-          this.pendingSubmittedPrompts.length - MAX_PENDING_PI_SUBMITTED_PROMPTS,
-        );
-      }
-    }
-    try {
-      return await this.runtimeSession.prompt(payload.text, payload.images, streamingBehavior);
-    } catch (error) {
-      if (pending) {
-        const index = this.pendingSubmittedPrompts.findIndex(
-          (candidate) => candidate.token === pending.token,
-        );
-        if (index !== -1) {
-          this.pendingSubmittedPrompts.splice(index, 1);
-        }
-      }
-      throw error;
-    }
-  }
-
-  private clearPendingSubmittedPrompts(): void {
-    this.pendingSubmittedPrompts.splice(0, this.pendingSubmittedPrompts.length);
   }
 
   private currentTurnIdForEvent(): string | undefined {
@@ -1985,11 +1923,7 @@ export class PiRpcAgentSession implements AgentSession {
     const requestId = randomUUID();
     const resultPromise = this.waitForExtensionResult(requestId);
     const payload = Buffer.from(JSON.stringify({ requestId, reason })).toString("base64url");
-    await this.runtimeSession.prompt(
-      `/${PASEO_PI_CAPTURE_EXTENSION_COMMAND} ${payload}`,
-      undefined,
-      "followUp",
-    );
+    await this.runtimeSession.prompt(`/${PASEO_PI_CAPTURE_EXTENSION_COMMAND} ${payload}`);
     await resultPromise;
   }
 
@@ -2047,20 +1981,9 @@ export class PiRpcAgentSession implements AgentSession {
       return true;
     }
     const pendingSteer = this.takePendingSteerSubmission(entry.text);
-    let submittedPrompt: (typeof this.pendingSubmittedPrompts)[number] | undefined;
-    if (!pendingSteer) {
-      const exactPromptIndex = this.pendingSubmittedPrompts.findIndex(
-        (pending) => pending.text === entry.text,
-      );
-      const promptIndex = exactPromptIndex === -1 ? 0 : exactPromptIndex;
-      submittedPrompt = this.pendingSubmittedPrompts.splice(promptIndex, 1)[0];
-    }
-    let clientMessageId = this.activeClientMessageId;
-    if (pendingSteer) {
-      clientMessageId = pendingSteer.clientMessageId;
-    } else if (submittedPrompt) {
-      clientMessageId = submittedPrompt.clientMessageId;
-    }
+    const clientMessageId = pendingSteer
+      ? pendingSteer.clientMessageId
+      : this.activeClientMessageId;
     this.emit({
       type: "timeline",
       provider: this.provider,
@@ -2243,7 +2166,6 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private handleProcessExit(error: string): void {
-    this.clearPendingSubmittedPrompts();
     this.rejectAllExtensionResults(new Error(error));
     if (!this.activeTurnId) {
       return;
@@ -2257,7 +2179,6 @@ export class PiRpcAgentSession implements AgentSession {
     this.pendingSettledMessages = null;
     this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
-    this.clearPendingSubmittedPrompts();
     this.emit({
       type: "turn_failed",
       provider: this.provider,
@@ -2486,7 +2407,7 @@ export class PiRpcAgentSession implements AgentSession {
     }
     if (event.message.role === "custom") {
       const text = getUserMessageText(event.message.content);
-      if (text && shouldProjectPiCustomMessage(event.message, text)) {
+      if (text) {
         this.emit({
           type: "timeline",
           provider: this.provider,
@@ -2549,7 +2470,6 @@ export class PiRpcAgentSession implements AgentSession {
       (turnId === this.lastInterruptedTurnId || (!turnId && this.lastInterruptedTurnId !== null))
     ) {
       this.lastInterruptedTurnId = null;
-      this.clearPendingSubmittedPrompts();
       return;
     }
     this.activeTurnId = null;
@@ -2560,7 +2480,6 @@ export class PiRpcAgentSession implements AgentSession {
     this.pendingSettledMessages = null;
     this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
-    this.clearPendingSubmittedPrompts();
     const errorMessage = latestPiErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
       this.usagePoller.stopTurn();
