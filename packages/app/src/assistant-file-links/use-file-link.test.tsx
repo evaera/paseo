@@ -12,10 +12,6 @@ import type { DirectorySuggestionResult } from "./resolver";
 import { useFileLink } from "./use-file-link";
 import type { OpenFileDisposition } from "@/workspace/file-open";
 
-vi.mock("@/utils/open-external-url", () => ({
-  openExternalUrl: vi.fn(async () => {}),
-}));
-
 const SOURCE = {
   href: "http://dumm.md",
   text: "dumm.md",
@@ -55,6 +51,8 @@ interface TestClient {
   }) => Promise<DirectorySuggestionResult>;
 }
 
+function openUrl(): void {}
+
 function createQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
@@ -81,7 +79,6 @@ function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; t
       },
       [],
     );
-
     return (
       <QueryClientProvider client={queryClient}>
         <AssistantFileLinkResolverProvider
@@ -89,6 +86,7 @@ function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; t
           serverId="server-1"
           workspaceRoot="/Users/test/project"
           onOpenWorkspaceFile={openWorkspaceFile}
+          onOpenUrl={openUrl}
           toast={input.toast}
         >
           {children}
@@ -119,6 +117,7 @@ describe("useFileLink", () => {
             serverId: "server-1",
             workspaceRoot: "/Users/test/project",
             onOpenWorkspaceFile: () => {},
+            onOpenUrl: openUrl,
             toast: createToast(),
           },
           children,
@@ -293,6 +292,7 @@ describe("useFileLink", () => {
             serverId="server-1"
             workspaceRoot={workspaceRoot}
             onOpenWorkspaceFile={openWorkspaceFile}
+            onOpenUrl={openUrl}
           >
             <WorkspaceSwitchContext.Provider value={setWorkspaceRoot}>
               {children}

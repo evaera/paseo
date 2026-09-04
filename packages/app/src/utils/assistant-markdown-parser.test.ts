@@ -25,4 +25,12 @@ describe("createAssistantMarkdownParser", () => {
 
     expect(parser.render("[x](javascript:alert(1))")).not.toContain("href");
   });
+
+  it("excludes sentence punctuation from an HTTP link with a port", () => {
+    const parser = createAssistantMarkdownParser();
+
+    expect(parser.renderInline("http://eryn-2.coder:3247.")).toBe(
+      '<a href="http://eryn-2.coder:3247">http://eryn-2.coder:3247</a>.',
+    );
+  });
 });
