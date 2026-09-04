@@ -85,11 +85,13 @@ The Desktop Release workflow overrides Electron Builder's default update source 
 
 The fork release matrix supports only Apple Silicon macOS and Windows x64. Keep this platform reduction on fork `main`; do not prepare or propose it as an upstream contribution.
 
+Version fork releases as CalVer `YYYY.M.N`, where `N` is the release sequence within the calendar month. Start each month at `1` and increment it for every fork release. This is also valid stable SemVer, so the updater and macOS/Windows metadata retain normal numeric ordering without sharing upstream Paseo's version sequence. The About section identifies the distribution separately as `Eryn's Choice`; do not encode that identity in the version.
+
 After each approved fork update:
 
 1. Require fork `main` to be clean, pushed, and equal to `origin/main`.
-2. Inspect the root package version and published `evaera/paseo` releases. Choose the smallest stable `X.Y.Z` greater than both by incrementing the patch component of the greater version. Verify neither the normalized `vX.Y.Z` release nor tag exists.
-3. Dispatch Desktop Release against `main` with source tag `desktop-vX.Y.Z`, platform `all`, publishing enabled, and rollout hours `0`. On the fork, `all` means Apple Silicon macOS and Windows x64.
+2. Inspect published `evaera/paseo` releases for the current calendar year and month. Choose `YYYY.M.1` when none exist, otherwise increment the greatest `N`. Verify neither the normalized `vYYYY.M.N` release nor tag exists.
+3. Dispatch Desktop Release against `main` with source tag `desktop-vYYYY.M.N`, platform `all`, publishing enabled, and rollout hours `0`. On the fork, `all` means Apple Silicon macOS and Windows x64.
 4. Monitor the workflow to completion. Require the published release to contain Apple Silicon macOS DMG and ZIP artifacts, Windows x64 NSIS and ZIP artifacts, and the `latest-mac.yml` and `latest.yml` updater manifests before calling the release complete. The workflow stamps the release version into the temporary root and every workspace package so the desktop app and its bundled daemon report the same version.
 5. Update the current machine from that release and report every other machine still pending.
 
