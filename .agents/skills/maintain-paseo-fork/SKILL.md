@@ -72,8 +72,8 @@ These commands run the current checkout and a checkout-scoped development home. 
 
 Build on the target operating system, or use that operating system's GitHub Actions runner. Artifacts land in `packages/desktop/release`:
 
-- macOS: `npm run build:desktop -- --publish never --mac --arm64` (use `--x64` on Intel)
-- Windows: `npm run build:desktop -- --publish never --win --x64` (use `--arm64` on ARM64)
+- Apple Silicon macOS: `npm run build:desktop -- --publish never --mac --arm64`
+- Windows x64: `npm run build:desktop -- --publish never --win --x64`
 
 Installing an artifact updates that machine once. It does not make future Git changes automatic.
 
@@ -83,12 +83,14 @@ Use fork-owned desktop releases for an everyday install shared across work and h
 
 The Desktop Release workflow overrides Electron Builder's default update source with the repository running the workflow. A build from `evaera/paseo` therefore embeds `evaera/paseo`, while upstream builds keep `getpaseo/paseo`.
 
+The fork release matrix supports only Apple Silicon macOS and Windows x64. Keep this platform reduction on fork `main`; do not prepare or propose it as an upstream contribution.
+
 After each approved fork update:
 
 1. Require fork `main` to be clean, pushed, and equal to `origin/main`.
 2. Inspect the root package version and published `evaera/paseo` releases. Choose the smallest stable `X.Y.Z` greater than both by incrementing the patch component of the greater version. Verify neither the normalized `vX.Y.Z` release nor tag exists.
-3. Dispatch Desktop Release against `main` with source tag `desktop-vX.Y.Z`, platform `all`, publishing enabled, and rollout hours `0`. The all-platform path is required because finalization publishes one complete manifest set.
-4. Monitor the workflow to completion. Require the published release to contain macOS DMG and ZIP artifacts, Windows NSIS and ZIP artifacts, and the `latest-mac.yml`, `latest-linux.yml`, and `latest.yml` updater manifests before calling the release complete. The workflow stamps the release version into the temporary root and every workspace package so the desktop app and its bundled daemon report the same version.
+3. Dispatch Desktop Release against `main` with source tag `desktop-vX.Y.Z`, platform `all`, publishing enabled, and rollout hours `0`. On the fork, `all` means Apple Silicon macOS and Windows x64.
+4. Monitor the workflow to completion. Require the published release to contain Apple Silicon macOS DMG and ZIP artifacts, Windows x64 NSIS and ZIP artifacts, and the `latest-mac.yml` and `latest.yml` updater manifests before calling the release complete. The workflow stamps the release version into the temporary root and every workspace package so the desktop app and its bundled daemon report the same version.
 5. Update the current machine from that release and report every other machine still pending.
 
 macOS automatic updates require a signed app. The fork Actions repository needs `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID`; without them, treat macOS artifacts as manual-install builds and do not claim automatic updates work. Windows unsigned builds may show installation reputation warnings. Do not tag, dispatch, publish, push, or install without explicit permission.
