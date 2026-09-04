@@ -94,7 +94,7 @@ describe("browser open wrapper resolution", () => {
         cliEntrypoint: null,
       }),
     ).toBe(realpathSync(wrapper));
-    chmodSync(wrapper, 0o644);
+    rmSync(wrapper);
     expect(
       resolveBrowserOpenWrapperPath({
         platform: "darwin",
