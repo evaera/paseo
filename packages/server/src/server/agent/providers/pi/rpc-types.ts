@@ -133,6 +133,8 @@ export type PiRpcCommand =
       images?: PiImageContent[];
       streamingBehavior: PiStreamingBehavior;
     }
+  | { id?: string; type: "steer"; message: string; images?: PiImageContent[] }
+  | { id?: string; type: "clear_queue" }
   | { id?: string; type: "compact"; customInstructions?: string }
   | { id?: string; type: "set_auto_compaction"; enabled: boolean }
   | { id?: string; type: "abort" }
