@@ -10,7 +10,7 @@ import {
   createElement,
 } from "react";
 import { createPortal } from "react-dom";
-import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { Modal, Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
