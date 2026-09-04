@@ -23,6 +23,7 @@ import {
 const RESIDENT_HOST_ID = "paseo-browser-resident-webviews";
 const attachedBrowsers: Array<{
   browserId: string;
+  profileId?: string;
   workspaceId: string;
   webContentsId: number;
 }> = [];
@@ -333,8 +334,18 @@ describe("resident browser webviews", () => {
     expect(firstWebview.getAttribute("partition")).toBe("persist:paseo-browser");
     expect(secondWebview.getAttribute("partition")).toBe("persist:paseo-browser");
     expect(attachedBrowsers).toEqual([
-      { browserId: "browser-first", workspaceId: "workspace-a", webContentsId: 101 },
-      { browserId: "browser-second", workspaceId: "workspace-b", webContentsId: 202 },
+      {
+        browserId: "browser-first",
+        profileId: "default",
+        workspaceId: "workspace-a",
+        webContentsId: 101,
+      },
+      {
+        browserId: "browser-second",
+        profileId: "default",
+        workspaceId: "workspace-b",
+        webContentsId: 202,
+      },
     ]);
   });
 
