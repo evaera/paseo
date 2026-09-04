@@ -25,7 +25,7 @@ import {
 import { spawnSync } from "node:child_process";
 
 import * as pty from "node-pty";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
 import { stripVTControlCharacters } from "node:util";
@@ -207,7 +207,7 @@ describe("createTerminal", () => {
         paseoCliBinDir: "/paseo-shim/bin",
         paseoHookCliPath: cli,
       });
-      expect(env.PATH?.split(":").slice(0, 3)).toEqual([
+      expect(env.PATH?.split(delimiter).slice(0, 3)).toEqual([
         "/paseo-shim/bin",
         dirname(realpathSync(wrapper)),
         "/custom/bin",
