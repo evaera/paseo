@@ -186,6 +186,20 @@ describe("desktop packaging", () => {
     expect(workflow).not.toContain("CSC_LINK: ${{ secrets.APPLE_CERTIFICATE }}");
   });
 
+  it("publishes platform artifacts from the Linux finalizer", () => {
+    const workflow = readFileSync(
+      join(packageRoot, "..", "..", ".github", "workflows", "desktop-release.yml"),
+      "utf8",
+    );
+
+    expect(workflow).not.toContain("Upload desktop artifacts to release");
+    expect(workflow).toContain("name: desktop-macos-arm64\n          path: release-artifacts");
+    expect(workflow).toContain("name: desktop-windows-x64\n          path: release-artifacts");
+    expect(workflow).toContain(
+      'gh release upload "$release_lookup" "${release_files[@]}" --clobber',
+    );
+  });
+
   // electron-builder packs production dependencies declared in package.json into
   // app.asar. Runtime code in runtime-paths.ts and bin/paseo dynamically resolves
   // these workspace packages by string, so static analysis (TypeScript, Knip) cannot

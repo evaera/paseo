@@ -204,31 +204,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Upload desktop artifacts to release
-        if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          release_dir="${DESKTOP_PACKAGE_PATH}/release"
-          files=()
-          while IFS= read -r -d '' f; do
-            files+=("$f")
-          done < <(find "$release_dir" -maxdepth 1 -type f ! -name '*.yml' -print0 | sort -z)
-          if (( ${#files[@]} == 0 )); then
-            echo "::error::No release artifacts found in $release_dir"
-            exit 1
-          fi
-          release_lookup="$(node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG")"
-          gh release upload "$release_lookup" "${files[@]}" --clobber --repo "${{ github.repository }}"
-
       - name: Upload desktop artifacts to workflow
-        if: env.SHOULD_PUBLISH != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: desktop-macos-${{ matrix.electron_arch }}
-          path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/*.dmg
+          path: |
+            ${{ env.DESKTOP_PACKAGE_PATH }}/release/*.dmg
+            ${{ env.DESKTOP_PACKAGE_PATH }}/release/*.zip
+            ${{ env.DESKTOP_PACKAGE_PATH }}/release/*.blockmap
           retention-days: 7
 
       - name: Upload manifest artifact
@@ -312,31 +295,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Upload desktop artifacts to release
-        if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          release_dir="${DESKTOP_PACKAGE_PATH}/release"
-          files=()
-          while IFS= read -r -d '' f; do
-            files+=("$f")
-          done < <(find "$release_dir" -maxdepth 1 -type f ! -name '*.yml' -print0 | sort -z)
-          if (( ${#files[@]} == 0 )); then
-            echo "::error::No release artifacts found in $release_dir"
-            exit 1
-          fi
-          release_lookup="$(node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG")"
-          gh release upload "$release_lookup" "${files[@]}" --clobber --repo "${{ github.repository }}"
-
       - name: Upload desktop artifacts to workflow
-        if: env.SHOULD_PUBLISH != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-windows
-          path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/*
+          name: desktop-windows-x64
+          path: |
+            ${{ env.DESKTOP_PACKAGE_PATH }}/release/*.exe
+            ${{ env.DESKTOP_PACKAGE_PATH }}/release/*.zip
+            ${{ env.DESKTOP_PACKAGE_PATH }}/release/*.blockmap
           retention-days: 7
 
       - name: Upload manifest artifact
@@ -398,6 +364,20 @@ jobs:
           name: windows-manifest
           path: release-manifests/windows-manifest
 
+      - name: Download macOS release artifacts
+        if: env.IS_SMOKE_TAG != 'true' && needs.publish-macos.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-macos-arm64
+          path: release-artifacts/macos-arm64
+
+      - name: Download Windows release artifacts
+        if: env.IS_SMOKE_TAG != 'true' && needs.publish-windows.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-windows-x64
+          path: release-artifacts/windows-x64
+
       - name: Assemble manifests and publish release
         if: env.IS_SMOKE_TAG != 'true'
         env:
@@ -443,20 +423,6 @@ jobs:
             cp "windows-manifest/${RELEASE_CHANNEL}.yml" "$manifests_dir/"
           fi
 
-          shopt -s nullglob
-          files=( "$manifests_dir"/*.yml )
-          if (( ${#files[@]} == 0 )); then
-            echo "::error::No manifest artifacts were available to publish"
-            exit 1
-          fi
-          timestamp="$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")"
-          node ../scripts/stamp-rollout.mjs --release-date "$timestamp" --rollout-hours "$ROLLOUT_HOURS" "${files[@]}"
-          node ../scripts/validate-desktop-manifests.mjs \
-            --release-date "$timestamp" \
-            --rollout-hours "$ROLLOUT_HOURS" \
-            "${files[@]}"
-          gh release upload "$release_lookup" "${files[@]}" --clobber --repo "${{ github.repository }}"
-
           failed_builds=()
           [[ "${{ needs.publish-macos.result }}" =~ ^(success|skipped)$ ]] || failed_builds+=(macOS)
           [[ "${{ needs.publish-windows.result }}" =~ ^(success|skipped)$ ]] || failed_builds+=(Windows)
@@ -473,6 +439,26 @@ jobs:
             echo "::error::Missing updater manifests: ${missing_manifests[*]}; the release remains a draft"
             exit 1
           fi
+
+          release_files=()
+          while IFS= read -r -d '' file; do
+            release_files+=("$file")
+          done < <(find ../release-artifacts -type f -print0 | sort -z)
+          if (( ${#release_files[@]} == 0 )); then
+            echo "::error::No desktop release artifacts were available to publish"
+            exit 1
+          fi
+
+          shopt -s nullglob
+          manifest_files=( "$manifests_dir"/*.yml )
+          timestamp="$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")"
+          node ../scripts/stamp-rollout.mjs --release-date "$timestamp" --rollout-hours "$ROLLOUT_HOURS" "${manifest_files[@]}"
+          node ../scripts/validate-desktop-manifests.mjs \
+            --release-date "$timestamp" \
+            --rollout-hours "$ROLLOUT_HOURS" \
+            "${manifest_files[@]}"
+          gh release upload "$release_lookup" "${release_files[@]}" --clobber --repo "${{ github.repository }}"
+          gh release upload "$release_lookup" "${manifest_files[@]}" --clobber --repo "${{ github.repository }}"
 
           publish_args=(release edit "$release_lookup" --tag "$RELEASE_TAG" --draft=false --repo "${{ github.repository }}")
           if [[ "$IS_PRERELEASE" == "true" ]]; then
