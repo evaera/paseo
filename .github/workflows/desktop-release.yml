@@ -133,21 +133,21 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set desktop package version from tag
+      - name: Set build package versions from tag
         shell: bash
         run: |
           node <<'NODE'
           const fs = require('node:fs');
-          const path = require('node:path');
 
           const version = process.env.DESKTOP_VERSION;
           if (!version) throw new Error('DESKTOP_VERSION env var is missing');
 
-          const packageJsonPath = path.join(process.env.DESKTOP_PACKAGE_PATH, 'package.json');
+          const packageJsonPath = 'package.json';
           const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
           packageJson.version = version;
           fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
           NODE
+          node scripts/sync-workspace-versions.mjs
 
       - name: Build desktop release
         shell: bash
@@ -166,6 +166,8 @@ jobs:
           build_args=(-- --publish never --mac --${{ matrix.electron_arch }})
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+          build_args+=("-c.publish.owner=${{ github.repository_owner }}")
+          build_args+=("-c.publish.repo=${{ github.event.repository.name }}")
           npm run build:desktop "${build_args[@]}"
 
       - name: Upload packaged smoke diagnostics
@@ -244,21 +246,21 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set desktop package version from tag
+      - name: Set build package versions from tag
         shell: bash
         run: |
           node <<'NODE'
           const fs = require('node:fs');
-          const path = require('node:path');
 
           const version = process.env.DESKTOP_VERSION;
           if (!version) throw new Error('DESKTOP_VERSION env var is missing');
 
-          const packageJsonPath = path.join(process.env.DESKTOP_PACKAGE_PATH, 'package.json');
+          const packageJsonPath = 'package.json';
           const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
           packageJson.version = version;
           fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
           NODE
+          node scripts/sync-workspace-versions.mjs
 
       - name: Install Linux smoke display
         run: sudo apt-get update && sudo apt-get install -y xvfb xauth
@@ -275,6 +277,8 @@ jobs:
           build_args=(-- --publish never --linux --x64)
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+          build_args+=("-c.publish.owner=${{ github.repository_owner }}")
+          build_args+=("-c.publish.repo=${{ github.event.repository.name }}")
           npm run build:desktop "${build_args[@]}"
 
       - name: Upload packaged smoke diagnostics
@@ -353,21 +357,21 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set desktop package version from tag
+      - name: Set build package versions from tag
         shell: bash
         run: |
           node <<'NODE'
           const fs = require('node:fs');
-          const path = require('node:path');
 
           const version = process.env.DESKTOP_VERSION;
           if (!version) throw new Error('DESKTOP_VERSION env var is missing');
 
-          const packageJsonPath = path.join(process.env.DESKTOP_PACKAGE_PATH, 'package.json');
+          const packageJsonPath = 'package.json';
           const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
           packageJson.version = version;
           fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
           NODE
+          node scripts/sync-workspace-versions.mjs
 
       - name: Build desktop release
         shell: bash
@@ -381,6 +385,8 @@ jobs:
           build_args=(-- --publish never --win --x64 --arm64)
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+          build_args+=("-c.publish.owner=${{ github.repository_owner }}")
+          build_args+=("-c.publish.repo=${{ github.event.repository.name }}")
           npm run build:desktop "${build_args[@]}"
 
       - name: Upload packaged smoke diagnostics

@@ -134,6 +134,30 @@ describe("desktop packaging", () => {
     expect(config).toContain("to: open-wrapper/open");
   });
 
+  it("embeds the current GitHub repository as the desktop update source in release builds", () => {
+    const workflow = readFileSync(
+      join(packageRoot, "..", "..", ".github", "workflows", "desktop-release.yml"),
+      "utf8",
+    );
+    const buildSteps = workflow.split("- name: Build desktop release").slice(1);
+
+    expect(buildSteps).toHaveLength(3);
+    for (const buildStep of buildSteps) {
+      expect(buildStep).toContain("-c.publish.owner=${{ github.repository_owner }}");
+      expect(buildStep).toContain("-c.publish.repo=${{ github.event.repository.name }}");
+    }
+  });
+
+  it("keeps desktop and bundled daemon versions aligned in release builds", () => {
+    const workflow = readFileSync(
+      join(packageRoot, "..", "..", ".github", "workflows", "desktop-release.yml"),
+      "utf8",
+    );
+
+    expect(workflow.match(/- name: Set build package versions from tag/g)).toHaveLength(3);
+    expect(workflow.match(/node scripts\/sync-workspace-versions\.mjs/g)).toHaveLength(3);
+  });
+
   // electron-builder packs production dependencies declared in package.json into
   // app.asar. Runtime code in runtime-paths.ts and bin/paseo dynamically resolves
   // these workspace packages by string, so static analysis (TypeScript, Knip) cannot
