@@ -86,11 +86,9 @@ win:
     - target: nsis
       arch:
         - x64
-        - arm64
     - target: zip
       arch:
         - x64
-        - arm64
 nsis:
   oneClick: false
   perMachine: false

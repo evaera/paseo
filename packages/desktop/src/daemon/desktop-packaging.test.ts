@@ -141,7 +141,7 @@ describe("desktop packaging", () => {
     );
     const buildSteps = workflow.split("- name: Build desktop release").slice(1);
 
-    expect(buildSteps).toHaveLength(3);
+    expect(buildSteps).toHaveLength(2);
     for (const buildStep of buildSteps) {
       expect(buildStep).toContain("-c.publish.owner=${{ github.repository_owner }}");
       expect(buildStep).toContain("-c.publish.repo=${{ github.event.repository.name }}");
@@ -154,8 +154,36 @@ describe("desktop packaging", () => {
       "utf8",
     );
 
-    expect(workflow.match(/- name: Set build package versions from tag/g)).toHaveLength(3);
-    expect(workflow.match(/node scripts\/sync-workspace-versions\.mjs/g)).toHaveLength(3);
+    expect(workflow.match(/- name: Set build package versions from tag/g)).toHaveLength(2);
+    expect(workflow.match(/node scripts\/sync-workspace-versions\.mjs/g)).toHaveLength(2);
+  });
+
+  it("builds fork releases only for Apple Silicon macOS and Windows x64", () => {
+    const workflow = readFileSync(
+      join(packageRoot, "..", "..", ".github", "workflows", "desktop-release.yml"),
+      "utf8",
+    );
+    const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
+
+    expect(workflow).toContain("runner: macos-14\n            electron_arch: arm64");
+    expect(workflow).toContain("build_args=(-- --publish never --win --x64)");
+    expect(workflow).not.toContain("publish-linux:");
+    expect(workflow).not.toContain("macos-15-intel");
+    expect(workflow).not.toContain("--win --x64 --arm64");
+    expect(config).not.toContain("- arm64");
+  });
+
+  it("omits empty Apple signing variables for unsigned fork builds", () => {
+    const workflow = readFileSync(
+      join(packageRoot, "..", "..", ".github", "workflows", "desktop-release.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain("PASEO_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}");
+    expect(workflow).toContain("export CSC_IDENTITY_AUTO_DISCOVERY=false");
+    expect(workflow).toContain('build_args+=("-c.mac.identity=null")');
+    expect(workflow).toContain('build_args+=("-c.mac.notarize=false")');
+    expect(workflow).not.toContain("CSC_LINK: ${{ secrets.APPLE_CERTIFICATE }}");
   });
 
   // electron-builder packs production dependencies declared in package.json into

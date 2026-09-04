@@ -6,7 +6,6 @@ on:
       - "v*"
       - "desktop-v*"
       - "desktop-macos-v*"
-      - "desktop-linux-v*"
       - "desktop-windows-v*"
   workflow_dispatch:
     inputs:
@@ -22,7 +21,6 @@ on:
         options:
           - all
           - macos
-          - linux
           - windows
       checkout_ref:
         description: "Optional branch/ref to checkout while using tag for release metadata."
@@ -56,7 +54,7 @@ env:
 
 jobs:
   create-release:
-    if: ${{ (github.event_name == 'push' && !startsWith(github.ref_name, 'desktop-macos-v') && !startsWith(github.ref_name, 'desktop-linux-v') && !startsWith(github.ref_name, 'desktop-windows-v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.platform == 'all' && github.event.inputs.publish != 'false') }}
+    if: ${{ (github.event_name == 'push' && !startsWith(github.ref_name, 'desktop-macos-v') && !startsWith(github.ref_name, 'desktop-windows-v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.platform == 'all' && github.event.inputs.publish != 'false') }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -102,8 +100,6 @@ jobs:
         include:
           - runner: macos-14
             electron_arch: arm64
-          - runner: macos-15-intel
-            electron_arch: x64
     permissions:
       contents: write
       packages: read
@@ -154,16 +150,45 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_GH_IGNORE_TIME: true
-          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PASEO_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          PASEO_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          PASEO_APPLE_ID: ${{ secrets.APPLE_ID }}
+          PASEO_APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          PASEO_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           PASEO_DESKTOP_SMOKE: "1"
           PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
         run: |
           set -euo pipefail
           build_args=(-- --publish never --mac --${{ matrix.electron_arch }})
+
+          signing_values=(
+            "$PASEO_APPLE_CERTIFICATE"
+            "$PASEO_APPLE_CERTIFICATE_PASSWORD"
+            "$PASEO_APPLE_ID"
+            "$PASEO_APPLE_PASSWORD"
+            "$PASEO_APPLE_TEAM_ID"
+          )
+          signing_value_count=0
+          for value in "${signing_values[@]}"; do
+            if [[ -n "$value" ]]; then
+              ((signing_value_count += 1))
+            fi
+          done
+          if (( signing_value_count == ${#signing_values[@]} )); then
+            export CSC_LINK="$PASEO_APPLE_CERTIFICATE"
+            export CSC_KEY_PASSWORD="$PASEO_APPLE_CERTIFICATE_PASSWORD"
+            export APPLE_ID="$PASEO_APPLE_ID"
+            export APPLE_APP_SPECIFIC_PASSWORD="$PASEO_APPLE_PASSWORD"
+            export APPLE_TEAM_ID="$PASEO_APPLE_TEAM_ID"
+          elif (( signing_value_count == 0 )); then
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            build_args+=("-c.mac.identity=null")
+            build_args+=("-c.mac.notarize=false")
+          else
+            echo "::error::Configure all Apple signing secrets or none of them"
+            exit 1
+          fi
+
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
           build_args+=("-c.publish.owner=${{ github.repository_owner }}")
@@ -212,117 +237,6 @@ jobs:
         with:
           name: mac-manifest-${{ matrix.electron_arch }}
           path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/${{ env.RELEASE_CHANNEL }}-mac.yml
-          retention-days: 1
-
-  publish-linux:
-    needs: [create-release]
-    if: ${{ always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'linux')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-linux-v')))) }}
-    permissions:
-      contents: write
-      packages: read
-    runs-on: ubuntu-22.04
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ env.CHECKOUT_REF }}
-
-      - name: Resolve release metadata
-        shell: bash
-        run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: package-lock.json
-          registry-url: "https://npm.pkg.github.com"
-          scope: "@boudra"
-
-      - name: Install JS dependencies
-        run: node scripts/npm-retry.mjs ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set build package versions from tag
-        shell: bash
-        run: |
-          node <<'NODE'
-          const fs = require('node:fs');
-
-          const version = process.env.DESKTOP_VERSION;
-          if (!version) throw new Error('DESKTOP_VERSION env var is missing');
-
-          const packageJsonPath = 'package.json';
-          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-          packageJson.version = version;
-          fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
-          NODE
-          node scripts/sync-workspace-versions.mjs
-
-      - name: Install Linux smoke display
-        run: sudo apt-get update && sudo apt-get install -y xvfb xauth
-
-      - name: Build desktop release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EP_GH_IGNORE_TIME: true
-          PASEO_DESKTOP_SMOKE: "1"
-          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
-        run: |
-          set -euo pipefail
-          build_args=(-- --publish never --linux --x64)
-          build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
-          build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
-          build_args+=("-c.publish.owner=${{ github.repository_owner }}")
-          build_args+=("-c.publish.repo=${{ github.event.repository.name }}")
-          npm run build:desktop "${build_args[@]}"
-
-      - name: Upload packaged smoke diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-smoke-linux-x64
-          path: ${{ runner.temp }}/desktop-smoke
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Upload desktop artifacts to release
-        if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          release_dir="${DESKTOP_PACKAGE_PATH}/release"
-          files=()
-          while IFS= read -r -d '' f; do
-            files+=("$f")
-          done < <(find "$release_dir" -maxdepth 1 -type f ! -name '*.yml' -print0 | sort -z)
-          if (( ${#files[@]} == 0 )); then
-            echo "::error::No release artifacts found in $release_dir"
-            exit 1
-          fi
-          release_lookup="$(node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG")"
-          gh release upload "$release_lookup" "${files[@]}" --clobber --repo "${{ github.repository }}"
-
-      - name: Upload desktop artifacts to workflow
-        if: env.SHOULD_PUBLISH != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-linux
-          path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/*
-          retention-days: 7
-
-      - name: Upload manifest artifact
-        if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-manifest
-          path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/${{ env.RELEASE_CHANNEL }}-linux.yml
           retention-days: 1
 
   publish-windows:
@@ -382,7 +296,7 @@ jobs:
           PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
         run: |
           set -euo pipefail
-          build_args=(-- --publish never --win --x64 --arm64)
+          build_args=(-- --publish never --win --x64)
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
           build_args+=("-c.publish.owner=${{ github.repository_owner }}")
@@ -434,7 +348,7 @@ jobs:
           retention-days: 1
 
   finalize-rollout:
-    needs: [publish-macos, publish-linux, publish-windows]
+    needs: [publish-macos, publish-windows]
     if: ${{ always() && (github.event_name != 'workflow_dispatch' || github.event.inputs.publish != 'false') }}
     permissions:
       contents: write
@@ -477,13 +391,6 @@ jobs:
           pattern: mac-manifest-*
           path: release-manifests
 
-      - name: Download Linux manifest artifact
-        if: env.IS_SMOKE_TAG != 'true' && needs.publish-linux.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          name: linux-manifest
-          path: release-manifests/linux-manifest
-
       - name: Download Windows manifest artifact
         if: env.IS_SMOKE_TAG != 'true' && needs.publish-windows.result == 'success'
         uses: actions/download-artifact@v4
@@ -504,7 +411,6 @@ jobs:
 
           expected_manifests=(
             "${RELEASE_CHANNEL}-mac.yml"
-            "${RELEASE_CHANNEL}-linux.yml"
             "${RELEASE_CHANNEL}.yml"
           )
           release_lookup="$(node ../scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG" --cleanup-duplicates)"
@@ -513,7 +419,6 @@ jobs:
             if grep -Fxq "$manifest_name" <<< "$existing_assets"; then
               case "$manifest_name" in
                 "${RELEASE_CHANNEL}-mac.yml") platform_result="${{ needs.publish-macos.result }}" ;;
-                "${RELEASE_CHANNEL}-linux.yml") platform_result="${{ needs.publish-linux.result }}" ;;
                 "${RELEASE_CHANNEL}.yml") platform_result="${{ needs.publish-windows.result }}" ;;
               esac
               if [[ "$platform_result" =~ ^(success|skipped)$ ]]; then
@@ -531,14 +436,7 @@ jobs:
 
           if [[ "${{ needs.publish-macos.result }}" == "success" ]]; then
             manifest_name="${RELEASE_CHANNEL}-mac.yml"
-            node ../scripts/merge-mac-manifest.mjs \
-              "mac-manifest-arm64/${manifest_name}" \
-              "mac-manifest-x64/${manifest_name}" \
-              "$manifests_dir/${manifest_name}"
-          fi
-
-          if [[ "${{ needs.publish-linux.result }}" == "success" ]]; then
-            cp "linux-manifest/${RELEASE_CHANNEL}-linux.yml" "$manifests_dir/"
+            cp "mac-manifest-arm64/${manifest_name}" "$manifests_dir/"
           fi
 
           if [[ "${{ needs.publish-windows.result }}" == "success" ]]; then
@@ -561,7 +459,6 @@ jobs:
 
           failed_builds=()
           [[ "${{ needs.publish-macos.result }}" =~ ^(success|skipped)$ ]] || failed_builds+=(macOS)
-          [[ "${{ needs.publish-linux.result }}" =~ ^(success|skipped)$ ]] || failed_builds+=(Linux)
           [[ "${{ needs.publish-windows.result }}" =~ ^(success|skipped)$ ]] || failed_builds+=(Windows)
           if (( ${#failed_builds[@]} > 0 )); then
             echo "::error::Desktop builds did not complete for ${failed_builds[*]}; the release remains a draft"
