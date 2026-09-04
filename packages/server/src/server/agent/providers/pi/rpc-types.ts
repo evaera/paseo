@@ -5,7 +5,9 @@ export interface PiImageContent {
   data: string;
   mimeType: string;
 }
-export type PiStreamingBehavior = "steer" | "followUp";
+export interface PiPromptAck {
+  agentInvoked?: boolean;
+}
 
 export interface PiPromptAck {
   requestId?: string;
@@ -39,7 +41,6 @@ export type PiAgentMessage =
   | {
       role: "custom";
       content: string | Array<PiTextContent | PiImageContent>;
-      customType?: string;
     }
   | {
       role: "assistant";
@@ -126,13 +127,7 @@ export interface PiRpcSlashCommand {
 }
 
 export type PiRpcCommand =
-  | {
-      id?: string;
-      type: "prompt";
-      message: string;
-      images?: PiImageContent[];
-      streamingBehavior: PiStreamingBehavior;
-    }
+  | { id?: string; type: "prompt"; message: string; images?: PiImageContent[] }
   | { id?: string; type: "steer"; message: string; images?: PiImageContent[] }
   | { id?: string; type: "clear_queue" }
   | { id?: string; type: "compact"; customInstructions?: string }
