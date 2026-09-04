@@ -158,19 +158,18 @@ describe("WebSocketServer browser tools wiring", () => {
     const harness = await startBrowserToolsDaemonHarness();
     const socket = new TestHubSocket();
     harness.wsServer.beginAcceptingConnections();
-    await harness.wsServer.attachHubSocket(socket, {
-      daemonId: "untrusted-daemon",
-      scopes: [],
-      agents: {
-        create: async () => {
-          throw new Error("unexpected agent creation");
-        },
-        control: async () => {
-          throw new Error("unexpected agent control");
-        },
-        subscribe: () => () => {},
+    await harness.wsServer.attachExternalSocket(
+      socket,
+      { transport: "hub", hubDaemonId: "untrusted-daemon" },
+      { principalId: "hub:untrusted-daemon", permissions: [] },
+      {
+        type: "hello",
+        clientId: "untrusted-hub",
+        clientType: "hub",
+        protocolVersion: 1,
       },
-    });
+    );
+    socket.sent.length = 0;
 
     socket.emitMessage({
       type: "session",

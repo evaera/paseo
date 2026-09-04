@@ -100,6 +100,7 @@ const PASEO_PI_SUBMITTED_USER_ENTRY_MARKER = "PASEO_SUBMITTED_USER_ENTRY";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
 const DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS = 30_000;
 const MAX_PENDING_PI_SUBMITTED_PROMPTS = 256;
+const DEFAULT_PI_RPC_TIMEOUT_MS = 60_000;
 const QUESTION_RESPONSE_HEADER = "Response";
 const QUESTION_COMMENT_HEADER = "Comment";
 const PI_ASK_USER_FREEFORM_SENTINEL = "✏️ Type custom response...";
@@ -108,6 +109,7 @@ const COMBINED_ASK_USER_METADATA = "ask_user_select_optional_comment";
 export const PiProviderParamsSchema = z
   .object({
     sessionDir: z.string().min(1).optional(),
+    rpcTimeoutMs: z.number().int().positive().default(DEFAULT_PI_RPC_TIMEOUT_MS),
     extensionTimeoutMs: z.number().int().positive().default(DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS),
   })
   .strict();
@@ -219,6 +221,21 @@ function capabilitiesForSession(hasMcpConfig: boolean): AgentCapabilityFlags {
 
 interface StartTurnResult {
   turnId: string;
+}
+
+interface PiPendingSteerSubmission {
+  text: string;
+  clientMessageId: string | null;
+}
+
+// COMPAT(piSteerFallback): added in v0.5.0, remove after 2027-03-01 once the pi floor
+// supports the steer RPC. Older binaries answer with "Unknown command: steer".
+function isPiDefinitiveSteerRejection(error: unknown): boolean {
+  return toDiagnosticErrorMessage(error) === "Unknown command: steer";
+}
+
+function isPiMissingClearQueueRpc(error: unknown): boolean {
+  return toDiagnosticErrorMessage(error) === "Unknown command: clear_queue";
 }
 
 interface PiRpcAgentSessionOptions {
@@ -1189,12 +1206,17 @@ function mapPiModel(model: PiModel, provider: AgentProvider): AgentModelDefiniti
   };
 }
 
-function createRuntime(logger: Logger, runtimeSettings?: ProviderRuntimeSettings): PiRuntime {
+function createRuntime(
+  logger: Logger,
+  runtimeSettings: ProviderRuntimeSettings | undefined,
+  requestTimeoutMs: number,
+): PiRuntime {
   return new PiCliRuntime({
     logger,
     runtimeSettings,
     command: [PI_BINARY_COMMAND],
     commandsRpcName: "get_commands",
+    requestTimeoutMs,
   });
 }
 
@@ -1222,6 +1244,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly pendingNoTurnOutputs: Array<{ turnId: string; message: string }> = [];
   private activePromptRequestId: string | null = null;
   private readonly pendingPromptResults = new Map<string, boolean>();
+  private readonly pendingSteerSubmissions: PiPendingSteerSubmission[] = [];
   private lastKnownThinkingOptionId: string | null;
   currentLeafOverrideId: string | null | undefined;
   private readonly capturedUserEntries: PiCapturedEntry[] = [];
@@ -1315,6 +1338,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
     this.activePromptRequestId = null;
+    this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
     this.activeNoTurnPromptText = payload.text;
     const shouldProbeForNoTurnPrompt = this.parseSlashCommandInput(payload.text) !== null;
@@ -1353,6 +1377,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeTurnStartedEmitted = false;
         this.pendingSettledMessages = null;
         this.activeAssistantMessageId = null;
+        this.pendingSteerSubmissions.length = 0;
         this.clearNoTurnBuffers();
         this.clearPendingSubmittedPrompts();
         if (isPiRequestAbortError(error)) {
@@ -1380,21 +1405,60 @@ export class PiRpcAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options: SteerActiveTurnOptions,
   ): Promise<SteerResult> {
-    if (this.activeTurnId !== options.expectedTurnId) {
+    if (this.closed || this.activeTurnId !== options.expectedTurnId) {
       return { status: "unavailable" };
     }
     const payload = convertPromptInput(prompt, { model: this.state.model });
+    // Pi rejects steer RPCs that are extension commands, so slash inputs keep the
+    // interrupt-and-replace fallback where they can run directly.
     if (this.parseSlashCommandInput(payload.text)) {
       return { status: "unavailable" };
     }
 
-    if (options.clearPendingPermissions) {
-      this.clearPendingPermissionsForSteer();
+    try {
+      await this.runtimeSession.steer(payload.text, payload.images);
+    } catch (error) {
+      if (isPiDefinitiveSteerRejection(error)) {
+        return { status: "unavailable" };
+      }
+      throw error;
     }
-    await this.sendUserPrompt(payload, "steer", options.clientMessageId ?? null, true);
+    // The steer is already queued inside pi; if the turn moved on meanwhile its fate
+    // is ambiguous, so surface it instead of replacing the wrong turn.
+    if (this.closed || this.activeTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    this.pendingSteerSubmissions.push({
+      text: payload.text,
+      clientMessageId: options.clientMessageId ?? null,
+    });
+    if (options.clearPendingPermissions) {
+      await this.clearPendingPermissionsForSteer();
+    }
     return { status: "accepted" };
   }
 
+  private async clearPendingPermissionsForSteer(): Promise<void> {
+    this.activeAskUserDialog = null;
+    this.pendingCombinedAskUserResponse = null;
+    const requestIds = Array.from(this.pendingExtensionUiRequests.keys());
+    for (const requestId of requestIds) {
+      if (!this.pendingExtensionUiRequests.has(requestId)) continue;
+      await this.respondToPermission(requestId, {
+        behavior: "deny",
+        message: "The user answered with a message instead of approving. Their message follows.",
+      });
+    }
+  }
+
+  private takePendingSteerSubmission(text: string): PiPendingSteerSubmission | undefined {
+    const index = this.pendingSteerSubmissions.findIndex((submission) => submission.text === text);
+    if (index < 0) {
+      return undefined;
+    }
+    const [submission] = this.pendingSteerSubmissions.splice(index, 1);
+    return submission;
+  }
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
     return () => {
@@ -1488,6 +1552,15 @@ export class PiRpcAgentSession implements AgentSession {
       this.lastInterruptedTurnId = turnId;
     }
     try {
+      try {
+        await this.runtimeSession.clearQueue();
+      } catch (error) {
+        // COMPAT(piClearQueueFallback): added in v0.5.0, remove after 2027-03-01 once
+        // the pi floor supports clear_queue (added in pi 0.84.4).
+        if (!isPiMissingClearQueueRpc(error)) {
+          throw error;
+        }
+      }
       await this.runtimeSession.abort();
     } catch (error) {
       this.clearPendingSubmittedPrompts();
@@ -1504,6 +1577,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeTurnStartedEmitted = false;
         this.pendingSettledMessages = null;
         this.activeAssistantMessageId = null;
+        this.pendingSteerSubmissions.length = 0;
         this.clearNoTurnBuffers();
         this.clearPendingSubmittedPrompts();
         this.emit({
@@ -1524,6 +1598,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.activeTurnStartedEmitted = false;
       this.pendingSettledMessages = null;
       this.activeAssistantMessageId = null;
+      this.pendingSteerSubmissions.length = 0;
       this.clearNoTurnBuffers();
       this.clearPendingSubmittedPrompts();
       this.emit({
@@ -1689,22 +1764,6 @@ export class PiRpcAgentSession implements AgentSession {
         }
       }
       throw error;
-    }
-  }
-
-  private clearPendingPermissionsForSteer(): void {
-    this.activeAskUserDialog = null;
-    this.pendingCombinedAskUserResponse = null;
-    for (const [requestId] of this.pendingExtensionUiRequests) {
-      this.pendingExtensionUiRequests.delete(requestId);
-      this.runtimeSession.cancelExtensionUiRequest(requestId);
-      this.emit({
-        type: "permission_resolved",
-        provider: this.provider,
-        requestId,
-        resolution: { behavior: "deny", message: "Superseded by an active-turn steer" },
-        turnId: this.currentTurnIdForEvent(),
-      });
     }
   }
 
@@ -1980,11 +2039,21 @@ export class PiRpcAgentSession implements AgentSession {
     if (!entry) {
       return true;
     }
-    const exactPromptIndex = this.pendingSubmittedPrompts.findIndex(
-      (pending) => pending.text === entry.text,
-    );
-    const promptIndex = exactPromptIndex === -1 ? 0 : exactPromptIndex;
-    const submittedPrompt = this.pendingSubmittedPrompts.splice(promptIndex, 1)[0];
+    const pendingSteer = this.takePendingSteerSubmission(entry.text);
+    let submittedPrompt: (typeof this.pendingSubmittedPrompts)[number] | undefined;
+    if (!pendingSteer) {
+      const exactPromptIndex = this.pendingSubmittedPrompts.findIndex(
+        (pending) => pending.text === entry.text,
+      );
+      const promptIndex = exactPromptIndex === -1 ? 0 : exactPromptIndex;
+      submittedPrompt = this.pendingSubmittedPrompts.splice(promptIndex, 1)[0];
+    }
+    let clientMessageId = this.activeClientMessageId;
+    if (pendingSteer) {
+      clientMessageId = pendingSteer.clientMessageId;
+    } else if (submittedPrompt) {
+      clientMessageId = submittedPrompt.clientMessageId;
+    }
     this.emit({
       type: "timeline",
       provider: this.provider,
@@ -1993,9 +2062,7 @@ export class PiRpcAgentSession implements AgentSession {
         type: "user_message",
         text: entry.text,
         messageId: entry.id,
-        ...(submittedPrompt?.clientMessageId
-          ? { clientMessageId: submittedPrompt.clientMessageId }
-          : {}),
+        ...(clientMessageId ? { clientMessageId } : {}),
       },
     });
     return true;
@@ -2171,6 +2238,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
+    this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
     this.clearPendingSubmittedPrompts();
     this.emit({
@@ -2473,6 +2541,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
+    this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
     this.clearPendingSubmittedPrompts();
     const errorMessage = latestPiErrorMessage(messages);
@@ -2520,7 +2589,9 @@ export class PiRpcAgentClient implements AgentClient {
     this.logger = options.logger;
     this.runtimeSettings = options.runtimeSettings;
     this.providerParams = PiProviderParamsSchema.parse(options.providerParams ?? {});
-    this.runtime = options.runtime ?? createRuntime(options.logger, options.runtimeSettings);
+    this.runtime =
+      options.runtime ??
+      createRuntime(options.logger, options.runtimeSettings, this.providerParams.rpcTimeoutMs);
     this.usagePollScheduler = options.usagePollScheduler;
   }
 
