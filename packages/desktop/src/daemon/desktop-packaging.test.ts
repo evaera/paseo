@@ -165,7 +165,7 @@ describe("desktop packaging", () => {
     );
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
 
-    expect(workflow).toContain("runner: macos-14\n            electron_arch: arm64");
+    expect(workflow).toMatch(/runner: macos-14\r?\n\s+electron_arch: arm64/);
     expect(workflow).toContain("build_args=(-- --publish never --win --x64)");
     expect(workflow).not.toContain("publish-linux:");
     expect(workflow).not.toContain("macos-15-intel");
@@ -193,8 +193,8 @@ describe("desktop packaging", () => {
     );
 
     expect(workflow).not.toContain("Upload desktop artifacts to release");
-    expect(workflow).toContain("name: desktop-macos-arm64\n          path: release-artifacts");
-    expect(workflow).toContain("name: desktop-windows-x64\n          path: release-artifacts");
+    expect(workflow).toMatch(/name: desktop-macos-arm64\r?\n\s+path: release-artifacts/);
+    expect(workflow).toMatch(/name: desktop-windows-x64\r?\n\s+path: release-artifacts/);
     expect(workflow).toContain(
       'gh release upload "$release_lookup" "${release_files[@]}" --clobber',
     );
