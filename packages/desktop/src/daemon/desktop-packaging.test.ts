@@ -134,70 +134,20 @@ describe("desktop packaging", () => {
     expect(config).toContain("to: open-wrapper/open");
   });
 
-  it("embeds the current GitHub repository as the desktop update source in release builds", () => {
-    const workflow = readFileSync(
-      join(packageRoot, "..", "..", ".github", "workflows", "desktop-release.yml"),
-      "utf8",
-    );
-    const buildSteps = workflow.split("- name: Build desktop release").slice(1);
+  it("builds local fork installers only for the owner's desktop platforms", () => {
+    const rootPackage = JSON.parse(
+      readFileSync(join(packageRoot, "..", "..", "package.json"), "utf8"),
+    ) as { scripts?: Record<string, string> };
+    const macosBuild = rootPackage.scripts?.["build:fork:macos"];
+    const windowsBuild = rootPackage.scripts?.["build:fork:windows"];
 
-    expect(buildSteps).toHaveLength(2);
-    for (const buildStep of buildSteps) {
-      expect(buildStep).toContain("-c.publish.owner=${{ github.repository_owner }}");
-      expect(buildStep).toContain("-c.publish.repo=${{ github.event.repository.name }}");
+    expect(macosBuild).toContain("--mac --arm64");
+    expect(macosBuild).toContain("-c.mac.identity=null -c.mac.notarize=false");
+    expect(windowsBuild).toContain("--win --x64");
+    expect(windowsBuild).not.toContain("--arm64");
+    for (const build of [macosBuild, windowsBuild]) {
+      expect(build).toContain("-c.publish.owner=evaera -c.publish.repo=paseo");
     }
-  });
-
-  it("keeps desktop and bundled daemon versions aligned in release builds", () => {
-    const workflow = readFileSync(
-      join(packageRoot, "..", "..", ".github", "workflows", "desktop-release.yml"),
-      "utf8",
-    );
-
-    expect(workflow.match(/- name: Set build package versions from tag/g)).toHaveLength(2);
-    expect(workflow.match(/node scripts\/sync-workspace-versions\.mjs/g)).toHaveLength(2);
-  });
-
-  it("builds fork releases only for Apple Silicon macOS and Windows x64", () => {
-    const workflow = readFileSync(
-      join(packageRoot, "..", "..", ".github", "workflows", "desktop-release.yml"),
-      "utf8",
-    );
-    const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
-
-    expect(workflow).toMatch(/runner: macos-14\r?\n\s+electron_arch: arm64/);
-    expect(workflow).toContain("build_args=(-- --publish never --win --x64)");
-    expect(workflow).not.toContain("publish-linux:");
-    expect(workflow).not.toContain("macos-15-intel");
-    expect(workflow).not.toContain("--win --x64 --arm64");
-    expect(config).not.toContain("- arm64");
-  });
-
-  it("omits empty Apple signing variables for unsigned fork builds", () => {
-    const workflow = readFileSync(
-      join(packageRoot, "..", "..", ".github", "workflows", "desktop-release.yml"),
-      "utf8",
-    );
-
-    expect(workflow).toContain("PASEO_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}");
-    expect(workflow).toContain("export CSC_IDENTITY_AUTO_DISCOVERY=false");
-    expect(workflow).toContain('build_args+=("-c.mac.identity=null")');
-    expect(workflow).toContain('build_args+=("-c.mac.notarize=false")');
-    expect(workflow).not.toContain("CSC_LINK: ${{ secrets.APPLE_CERTIFICATE }}");
-  });
-
-  it("publishes platform artifacts from the Linux finalizer", () => {
-    const workflow = readFileSync(
-      join(packageRoot, "..", "..", ".github", "workflows", "desktop-release.yml"),
-      "utf8",
-    );
-
-    expect(workflow).not.toContain("Upload desktop artifacts to release");
-    expect(workflow).toMatch(/name: desktop-macos-arm64\r?\n\s+path: release-artifacts/);
-    expect(workflow).toMatch(/name: desktop-windows-x64\r?\n\s+path: release-artifacts/);
-    expect(workflow).toContain(
-      'gh release upload "$release_lookup" "${release_files[@]}" --clobber',
-    );
   });
 
   // electron-builder packs production dependencies declared in package.json into
