@@ -6,9 +6,10 @@ import {
   toTerminalCommandError,
   type TerminalCommandOptions,
 } from "./shared.js";
-import { terminalSchema, type TerminalRow, toTerminalRow } from "./schema.js";
+import { terminalSchema, type TerminalRow } from "./schema.js";
 
 export interface TerminalCreateOptions extends TerminalCommandOptions {
+  workspace?: string;
   cwd?: string;
   name?: string;
   pane?: string;
@@ -22,19 +23,8 @@ export async function runCreateCommand(
   options: TerminalCreateOptions,
   _command: Command,
 ): Promise<SingleResult<TerminalRow>> {
-  const { client } = await connectTerminalClient(options.host);
-  const cwd = options.cwd ?? process.cwd();
-
+  const { client, daemonClient, close } = await connectTerminalClient(options.daemonTarget);
   try {
-    const opened = await client.openProject(cwd);
-    if (!opened.workspace) {
-      const error: CommandError = {
-        code: "WORKSPACE_OPEN_FAILED",
-        message: opened.error ?? "Failed to open workspace",
-      };
-      throw error;
-    }
-
     if (options.split && !options.targetPane) {
       const error: CommandError = {
         code: "TARGET_PANE_REQUIRED",
@@ -42,9 +32,13 @@ export async function runCreateCommand(
       };
       throw error;
     }
+    const cwd = options.cwd ?? (options.workspace ? undefined : process.cwd());
+    const workspaceId =
+      options.workspace ?? (await client.workspaces.open(options.cwd ?? process.cwd())).id;
+
     if (options.pane || options.split) {
-      const inspection = await client.executeWorkspaceLayout({
-        workspaceId: opened.workspace.id,
+      const inspection = await daemonClient.executeWorkspaceLayout({
+        workspaceId,
         command: { command: "get_layout", args: {} },
         ...(options.hostInstance ? { hostInstanceId: options.hostInstance } : {}),
       });
@@ -65,45 +59,47 @@ export async function runCreateCommand(
       }
     }
 
-    const payload = await client.createTerminal(cwd, options.name, undefined, {
-      workspaceId: opened.workspace.id,
+    const terminal = await client.terminals.create({
+      workspaceId,
+      cwd,
+      name: options.name,
     });
-    if (!payload.terminal) {
-      const error: CommandError = {
-        code: "TERMINAL_CREATE_FAILED",
-        message: payload.error ?? "Failed to create terminal",
-      };
-      throw error;
-    }
+    const snapshot = terminal.current();
+    if (!snapshot) throw new Error("The daemon did not create a terminal");
+
     if (options.pane || options.split) {
-      const layout = await client.executeWorkspaceLayout({
-        workspaceId: opened.workspace.id,
-        ...(options.hostInstance ? { hostInstanceId: options.hostInstance } : {}),
-        command: {
-          command: "open_tab",
-          args: {
-            target: { kind: "terminal", terminalId: payload.terminal.id },
-            placement: options.split
-              ? { mode: "split", targetPaneId: options.targetPane!, position: options.split }
-              : { mode: "pane", paneId: options.pane! },
+      try {
+        const layout = await daemonClient.executeWorkspaceLayout({
+          workspaceId,
+          ...(options.hostInstance ? { hostInstanceId: options.hostInstance } : {}),
+          command: {
+            command: "open_tab",
+            args: {
+              target: { kind: "terminal", terminalId: snapshot.id },
+              placement: options.split
+                ? { mode: "split", targetPaneId: options.targetPane!, position: options.split }
+                : { mode: "pane", paneId: options.pane! },
+            },
           },
-        },
-      });
-      if (!layout.ok) {
-        await client.killTerminal(payload.terminal.id).catch(() => {});
-        const error: CommandError = { code: layout.error.code, message: layout.error.message };
+        });
+        if (!layout.ok) {
+          const error: CommandError = { code: layout.error.code, message: layout.error.message };
+          throw error;
+        }
+      } catch (error) {
+        await terminal.kill().catch(() => {});
         throw error;
       }
     }
     return {
       type: "single",
-      data: toTerminalRow(payload.terminal),
+      data: snapshot,
       schema: terminalSchema,
     };
   } catch (err) {
     throw toTerminalCommandError("TERMINAL_CREATE_FAILED", "create terminal", err);
   } finally {
-    await client.close().catch(() => {});
+    await close().catch(() => {});
   }
 }
 

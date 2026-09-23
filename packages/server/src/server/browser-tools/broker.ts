@@ -212,7 +212,10 @@ export class BrowserToolsBroker {
     });
   }
 
-  public receiveResponse(response: BrowserAutomationExecuteResponse): boolean {
+  public receiveResponse(
+    response: BrowserAutomationExecuteResponse,
+    clientIds?: readonly string[],
+  ): boolean {
     const parsed = BrowserAutomationExecuteResponseSchema.safeParse(response);
     if (!parsed.success) {
       const requestId = getBrowserAutomationResponseRequestId(response);
@@ -221,7 +224,7 @@ export class BrowserToolsBroker {
       }
 
       const pending = this.pending.get(requestId);
-      if (!pending) {
+      if (!pending || (clientIds && !clientIds.includes(pending.clientId))) {
         return false;
       }
 
@@ -238,7 +241,7 @@ export class BrowserToolsBroker {
     }
 
     const pending = this.pending.get(parsed.data.payload.requestId);
-    if (!pending) {
+    if (!pending || (clientIds && !clientIds.includes(pending.clientId))) {
       return false;
     }
 

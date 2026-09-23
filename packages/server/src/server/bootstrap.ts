@@ -1,7 +1,8 @@
+import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { constants, existsSync, unlinkSync } from "fs";
-import { open, rm } from "fs/promises";
+import { open, rm, stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
@@ -79,12 +80,12 @@ export function parseListenString(listen: string): ListenTarget {
   throw new Error(`Invalid listen string: ${listen}`);
 }
 
-function formatListenTarget(listenTarget: ListenTarget | null): string | null {
+export function formatListenTarget(listenTarget: ListenTarget | null): string | null {
   if (!listenTarget) {
     return null;
   }
   if (listenTarget.type === "tcp") {
-    return `${listenTarget.host}:${listenTarget.port}`;
+    return `${formatHostForHttpUrl(listenTarget.host)}:${listenTarget.port}`;
   }
   return listenTarget.path;
 }
@@ -199,6 +200,7 @@ import {
   type ManagedProcessRegistry,
 } from "./managed-processes/managed-processes.js";
 import { terminateWithTreeKill } from "../utils/tree-kill.js";
+import { withTimeout } from "../utils/promise-timeout.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
 import {
   createRequireBearerMiddleware,
@@ -610,6 +612,7 @@ export async function createPaseoDaemon(
   const workspaceLayoutBroker = new WorkspaceLayoutBroker({});
   const pluginRuntime = new PluginService(logger, daemonConfigStore, daemonVersion, {
     managedSources: new ManagedPluginSources(config.paseoHome),
+    settingsDirectory: path.join(config.paseoHome, "plugin-settings"),
   });
 
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
@@ -879,11 +882,20 @@ export async function createPaseoDaemon(
       forgeOverrides: { github },
     },
   });
+  workspaceRegistry.subscribeToMutations((mutation) => {
+    if (mutation.kind === "archive" && mutation.workspace) {
+      pluginRuntime.emit("workspace.archived", {
+        workspace: describeHookWorkspace(mutation.workspace),
+      });
+    }
+  });
   const workspaceProvisioning = createWorkspaceProvisioningService({
+    lifecycle: pluginRuntime,
     serverId,
     projectRegistry,
     workspaceRegistry,
     workspaceGitService,
+    isDirectory: async (target) => (await stat(target).catch(() => null))?.isDirectory() ?? false,
     logger,
   });
   const agentProviderRuntime = await createAgentProviderRuntime({
@@ -913,6 +925,7 @@ export async function createPaseoDaemon(
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
+    pluginLifecycle: pluginRuntime,
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
@@ -1770,7 +1783,10 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
-    await pluginRuntime.stopAllPlugins();
+    // Stop tracking plugin provider registrations before anything tears plugins
+    // down, so plugin shutdown cannot withdraw a provider from under an agent
+    // that is still open. Plugins themselves are stopped once every session
+    // they serve has been closed, further down.
     unsubscribePluginProviders();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
@@ -1783,6 +1799,7 @@ export async function createPaseoDaemon(
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
     await agentProviderRuntime.shutdown();
+    await pluginRuntime.stopAllPlugins();
     terminalManager.killAll();
     await speechService.stop();
     await scheduleService.stop().catch(() => undefined);
@@ -1823,12 +1840,24 @@ export async function createPaseoDaemon(
   };
 }
 
+/**
+ * Closing an agent asks its provider to close the session and waits for the
+ * answer. A provider that never answers must not hold the daemon open, so a
+ * close that outlives this deadline is abandoned; `agentProviderRuntime`
+ * shutdown runs next and rejects the request that was still pending.
+ */
+const AGENT_CLOSE_TIMEOUT_MS = 5_000;
+
 async function closeAllAgents(logger: Logger, agentManager: AgentManager): Promise<void> {
   const agents = agentManager.listAgents();
   await Promise.all(
     agents.map(async (agent) => {
       try {
-        await agentManager.closeAgent(agent.id);
+        await withTimeout({
+          promise: agentManager.closeAgent(agent.id),
+          timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
+          label: `close agent ${agent.id}`,
+        });
       } catch (err) {
         logger.error({ err, agentId: agent.id }, "Failed to close agent");
       }

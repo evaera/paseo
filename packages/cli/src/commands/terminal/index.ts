@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { withOutput } from "../../output/index.js";
 import {
   addDaemonHostOption,
@@ -19,14 +19,18 @@ export function createTerminalCommand(): Command {
     terminal
       .command("ls")
       .description("List terminals")
-      .option("--all", "List terminals across all workspaces")
-      .option("--cwd <path>", "Workspace directory"),
+      .addOption(
+        new Option("--all", "List terminals across all workspaces").conflicts(["cwd", "workspace"]),
+      )
+      .option("--workspace <id>", "Workspace ID")
+      .option("--cwd <path>", "Working directory"),
   ).action(withOutput(runLsCommand));
 
   addJsonAndDaemonHostOptions(
     terminal
       .command("create")
       .description("Create a terminal")
+      .option("--workspace <id>", "Workspace ID")
       .option("--cwd <path>", "Workspace directory")
       .option("--name <name>", "Terminal name")
       .option("--pane <pane-id>", "Open the terminal tab in an existing pane")

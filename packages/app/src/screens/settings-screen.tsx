@@ -39,6 +39,7 @@ import {
   Sparkles,
   Blocks,
   PanelsTopLeft,
+  ChevronRight,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -48,7 +49,7 @@ import { HostPicker as SharedHostPicker } from "@/components/hosts/host-picker";
 import { HostStatusDot } from "@/components/host-status-dot";
 import { ScreenTitle } from "@/components/headers/screen-title";
 import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
-import { SettingsSection } from "@/screens/settings/settings-section";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { AppearanceSection } from "@/screens/settings/appearance/appearance-section";
 import { LayoutSection } from "@/screens/settings/layout/layout-section";
 import {
@@ -91,6 +92,7 @@ import { isElectronRuntime } from "@/desktop/host";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { resolveAppVersion } from "@/utils/app-version";
+import { openChangelog } from "@/changelog";
 import { useAppDiagnosticStore } from "@/diagnostics/store";
 import { settingsStyles } from "@/styles/settings";
 import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pcm";
@@ -112,6 +114,9 @@ import {
   HostWorkspacesPage,
   HostTerminalsPage,
 } from "@/screens/settings/host-page";
+import { resolvePluginIcon } from "@/plugins/icons";
+import { PluginSettingsContent } from "@/plugins/settings";
+import { useInstalledPlugins } from "@/plugins/registry";
 import { HostPluginsPage } from "@/screens/settings/plugins-page";
 import { MetadataGenerationPage } from "@/screens/settings/metadata-generation-page";
 import ProjectsScreen from "@/screens/projects-screen";
@@ -610,6 +615,7 @@ function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSection
             </View>
             <Text style={styles.aboutValue}>{"Eryn's Choice"}</Text>
           </View>
+          <WhatsNewRow />
           {isDesktopApp ? <DesktopAppUpdateRow /> : null}
         </View>
       </SettingsSection>
@@ -618,6 +624,33 @@ function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSection
         <CommunityLinks />
       </View>
     </>
+  );
+}
+
+function WhatsNewRow() {
+  const { t } = useTranslation();
+  const { theme } = useUnistyles();
+
+  return (
+    <Pressable
+      style={[settingsStyles.row, settingsStyles.rowBorder]}
+      onPress={openChangelog}
+      accessibilityRole="button"
+      testID="settings-whats-new"
+    >
+      {({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => (
+        <>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>{t("changelog.title")}</Text>
+            <Text style={settingsStyles.rowHint}>{t("settings.about.whatsNewHint")}</Text>
+          </View>
+          <ChevronRight
+            size={theme.iconSize.sm}
+            color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+          />
+        </>
+      )}
+    </Pressable>
   );
 }
 
@@ -1072,6 +1105,7 @@ function SettingsSidebar({
   let selectedHostSection: HostSectionSlug | null = null;
   if (view.kind === "host") selectedHostSection = view.section;
   if (view.kind === "project") selectedHostSection = "projects";
+  if (view.kind === "plugin") selectedHostSection = "plugins";
 
   const sidebarBody = (
     <>
@@ -1210,7 +1244,9 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   const sortedHosts = useSortedHosts(hosts, localServerId);
   const lastWorkspaceSelection = useLastWorkspaceSelection();
   const routedSettingsHostServerId =
-    view.kind === "host" || view.kind === "project" ? view.serverId : null;
+    view.kind === "host" || view.kind === "project" || view.kind === "plugin"
+      ? view.serverId
+      : null;
   const [selectedSettingsHostServerId, setSelectedSettingsHostServerId] = useState<string | null>(
     routedSettingsHostServerId ?? lastWorkspaceSelection?.serverId ?? null,
   );
@@ -1225,7 +1261,8 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   // The host the four sections scope to: the host on the active view, otherwise
   // the picker choice, otherwise the connected local daemon, otherwise the first host.
   const activeHostServerId = useMemo(() => {
-    if (view.kind === "host" || view.kind === "project") return view.serverId;
+    if (view.kind === "host" || view.kind === "project" || view.kind === "plugin")
+      return view.serverId;
     return resolveActiveHostServerId({
       selectedServerId: selectedSettingsHostServerId,
       localServerId,
@@ -1431,11 +1468,21 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     returnFromSettings({ kind: "root" });
   }, []);
 
+  const installedPlugins = useInstalledPlugins();
   const detailHeader = ((): {
     title: string;
     Icon: ComponentType<{ size: number; color: string }>;
     titleAccessory?: ReactNode;
   } | null => {
+    if (view.kind === "plugin") {
+      const screen = installedPlugins
+        .find((plugin) => plugin.serverId === view.serverId && plugin.id === view.pluginId)
+        ?.settingsScreens.find((candidate) => candidate.id === view.screenId);
+      return {
+        title: `${view.pluginId} · ${screen?.title ?? t("settings.title")}`,
+        Icon: screen ? resolvePluginIcon(screen.icon) : Blocks,
+      };
+    }
     if (view.kind === "host") {
       const item = HOST_SECTION_ITEMS.find((s) => s.id === view.section);
       if (!item) return null;
@@ -1457,6 +1504,14 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     content = isDesktopApp ? <LayoutSection /> : null;
   } else {
     content = (() => {
+      if (view.kind === "plugin")
+        return (
+          <PluginSettingsContent
+            serverId={view.serverId}
+            pluginId={view.pluginId}
+            screenId={view.screenId}
+          />
+        );
       if (view.kind === "host") {
         return renderHostSettingsContent(view, handleHostRemoved);
       }

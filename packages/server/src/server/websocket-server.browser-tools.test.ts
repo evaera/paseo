@@ -8,6 +8,10 @@ import type {
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import type {
+  WorkspaceLayoutExecuteRequest,
+  WorkspaceLayoutExecuteResponse,
+} from "@getpaseo/protocol/workspace-layout/rpc-schemas";
 import type pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -23,10 +27,14 @@ import { DaemonClient } from "./test-utils/daemon-client.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
+import { WorkspaceLayoutBroker } from "./workspace-layout/broker.js";
 
 interface BrowserToolsDaemonHarness {
   broker: BrowserToolsBroker;
+  layoutBroker: WorkspaceLayoutBroker;
   wsServer: VoiceAssistantWebSocketServer;
+  url: string;
+  clients: Set<DaemonClient>;
   connectBrowserHostClient(
     options?: ConnectBrowserHostClientOptions,
   ): Promise<BrowserHostClientHandle>;
@@ -82,6 +90,62 @@ function createWorkspaceAutoNameStub(): WorkspaceAutoName {
 }
 
 describe("WebSocketServer browser tools wiring", () => {
+  it("delivers capability-declared layout requests to owned-subscription clients", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const client = new DaemonClient({
+      url: harness.url,
+      clientId: "layout-host-client",
+      clientType: "browser",
+      connectTimeoutMs: 500,
+      reconnect: { enabled: false },
+      capabilities: {
+        [CLIENT_CAPS.workspaceLayoutHost]: {
+          hostKind: "desktop app",
+          hostInstanceId: "layout-host-1",
+        },
+      },
+    });
+    harness.clients.add(client);
+    let resolveRequest!: (request: WorkspaceLayoutExecuteRequest) => void;
+    const requestPromise = new Promise<WorkspaceLayoutExecuteRequest>((resolve) => {
+      resolveRequest = resolve;
+    });
+    client.on("workspace.layout.execute.request", resolveRequest);
+    await client.connect();
+
+    const resultPromise = harness.layoutBroker.execute({
+      workspaceId: "wks_test",
+      command: { command: "get_layout", args: {} },
+    });
+    const request = await requestPromise;
+    client.sendWorkspaceLayoutExecuteResponse({
+      type: "workspace.layout.execute.response",
+      payload: {
+        requestId: request.requestId,
+        hostInstanceId: "layout-host-1",
+        status: "success",
+        ok: true,
+        result: {
+          command: "get_layout",
+          layout: {
+            workspaceId: "wks_test",
+            focusedPaneId: "pane-1",
+            root: {
+              kind: "pane",
+              pane: { paneId: "pane-1", tabs: [], focusedTabId: null },
+            },
+          },
+        },
+      },
+    } satisfies WorkspaceLayoutExecuteResponse);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      ok: true,
+      hostInstanceId: "layout-host-1",
+      result: { layout: { workspaceId: "wks_test" } },
+    });
+  });
+
   it("registers capable clients and dispatches broker requests over the real WebSocket path", async () => {
     const harness = await startBrowserToolsDaemonHarness();
     const browserHost = await harness.connectBrowserHostClient();
@@ -270,10 +334,11 @@ describe("WebSocketServer browser tools wiring", () => {
   it("keeps browser automation registered when a browser host client resumes", async () => {
     const harness = await startBrowserToolsDaemonHarness();
     const clientId = "browser-host-client-1";
-    await harness.connectBrowserHostClient({
+    const originalBrowserHost = await harness.connectBrowserHostClient({
       clientId,
       capabilities: browserHostCapabilities(),
     });
+    await originalBrowserHost.disconnect();
 
     const resumedBrowserHost = await harness.connectBrowserHostClient({
       clientId,
@@ -313,6 +378,7 @@ describe("WebSocketServer browser tools wiring", () => {
     await browserHost.nextBrowserRequest();
     expect(harness.broker.getPendingRequestCount()).toBe(1);
 
+    await browserHost.disconnect();
     await harness.connectBrowserHostClient({
       clientId,
       capabilities: browserHostCapabilities(["list_tabs"]),
@@ -332,9 +398,14 @@ async function startBrowserToolsDaemonHarness(
 ): Promise<BrowserToolsDaemonHarness> {
   const httpServer = createServer();
   const broker = createBroker();
+  const layoutBroker = new WorkspaceLayoutBroker({
+    defaultTimeoutMs: 500,
+    createRequestId: createRequestIdSequence(),
+  });
   const wsServer = createVoiceAssistantWebSocketServer({
     httpServer,
     broker,
+    layoutBroker,
     browserToolsEnabled: harnessOptions.browserToolsEnabled ?? true,
   });
   const clients = new Set<DaemonClient>();
@@ -344,7 +415,10 @@ async function startBrowserToolsDaemonHarness(
 
   const harness: BrowserToolsDaemonHarness = {
     broker,
+    layoutBroker,
     wsServer,
+    url,
+    clients,
     async connectBrowserHostClient(options = {}) {
       const clientId = options.clientId;
       const client = new DaemonClient({
@@ -363,6 +437,11 @@ async function startBrowserToolsDaemonHarness(
       });
 
       await client.connect();
+      const capability = (options.capabilities ?? browserHostCapabilities())[
+        CLIENT_CAPS.browserHost
+      ] as { hostKind: "desktop app"; supportedCommands: BrowserAutomationCommandName[] };
+      const observation = client.registerBrowserHost(capability);
+      await observation.ready;
 
       return {
         clientId: clientId ?? "",
@@ -375,6 +454,7 @@ async function startBrowserToolsDaemonHarness(
         respondToBrowserRequest: (response) =>
           client.sendBrowserAutomationExecuteResponse(response),
         async disconnect() {
+          await observation.release();
           requests.close();
           clients.delete(client);
           await client.close();
@@ -412,6 +492,7 @@ function createRequestIdSequence(): () => string {
 function createVoiceAssistantWebSocketServer(params: {
   httpServer: HTTPServer;
   broker: BrowserToolsBroker;
+  layoutBroker: WorkspaceLayoutBroker;
   browserToolsEnabled: boolean;
 }): VoiceAssistantWebSocketServer {
   const { httpServer, broker } = params;
@@ -476,6 +557,8 @@ function createVoiceAssistantWebSocketServer(params: {
     undefined,
     undefined,
     broker,
+    undefined,
+    params.layoutBroker,
   );
 }
 

@@ -5,7 +5,12 @@ import type {
   WorkspaceLayoutPosition,
 } from "@getpaseo/protocol/workspace-layout/rpc-schemas";
 import { WorkspaceLayoutPositionSchema } from "@getpaseo/protocol/workspace-layout/rpc-schemas";
-import { withOutput, type OutputSchema, type SingleResult } from "../../output/index.js";
+import {
+  withOutput,
+  type CommandOptions,
+  type OutputSchema,
+  type SingleResult,
+} from "../../output/index.js";
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
 import { connectToDaemon } from "../../utils/client.js";
 
@@ -21,8 +26,7 @@ const OPEN_KINDS = [
 ] as const;
 type OpenKind = (typeof OPEN_KINDS)[number];
 
-interface LayoutOptions {
-  host?: string;
+interface LayoutOptions extends CommandOptions {
   cwd?: string;
   workspace?: string;
   hostInstance?: string;
@@ -122,7 +126,7 @@ async function run(
   options: LayoutOptions,
   command: WorkspaceLayoutCommand,
 ): Promise<SingleResult<LayoutResult>> {
-  const client = await connectToDaemon({ host: options.host });
+  const client = await connectToDaemon({ target: options.daemonTarget });
   try {
     const workspaceId =
       options.workspace ?? (await client.openProject(options.cwd ?? process.cwd())).workspace?.id;
