@@ -76,7 +76,12 @@ import {
 } from "./options.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
-import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from "./rewind.js";
+import {
+  realClaudeRewindSdk,
+  revertClaudeConversation,
+  revertClaudeFiles,
+  type ClaudeRewindSdk,
+} from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
@@ -287,6 +292,11 @@ interface AsyncMessageInput<T> {
   iterable: AsyncIterable<T>;
 }
 
+interface ClaudeReplayOwnership {
+  restoredIds: ReadonlySet<string>;
+  toolOwners: ReadonlyMap<string, string>;
+}
+
 interface PersistedTimelineEntry {
   item: AgentTimelineItem;
   timestamp?: string;
@@ -400,6 +410,7 @@ interface ClaudeAgentClientOptions {
   resolveBinary?: () => Promise<string>;
   resolveVersion?: (signal?: AbortSignal) => Promise<string>;
   configDir?: string;
+  rewindSdk?: ClaudeRewindSdk;
 }
 
 interface ClaudeAgentSessionOptions {
@@ -412,6 +423,7 @@ interface ClaudeAgentSessionOptions {
   logger: Logger;
   queryFactory?: ClaudeQueryFactory;
   resolveBinary: () => Promise<string>;
+  rewindSdk?: ClaudeRewindSdk;
 }
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -1495,6 +1507,7 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: (signal?: AbortSignal) => Promise<string>;
   private readonly configDir?: string;
+  private readonly rewindSdk: ClaudeRewindSdk;
 
   constructor(options: ClaudeAgentClientOptions) {
     this.defaults = options.defaults;
@@ -1506,6 +1519,7 @@ export class ClaudeAgentClient implements AgentClient {
       options.resolveVersion ??
       ((signal) => resolveClaudeCodeVersion(this.runtimeSettings, signal));
     this.configDir = options.configDir;
+    this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
   }
 
   resolveConfiguredModel(model: AgentModelDefinition): AgentModelDefinition {
@@ -1527,6 +1541,7 @@ export class ClaudeAgentClient implements AgentClient {
       logger: this.logger,
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
+      rewindSdk: this.rewindSdk,
     });
   }
 
@@ -1555,7 +1570,13 @@ export class ClaudeAgentClient implements AgentClient {
       logger: this.logger,
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
+      rewindSdk: this.rewindSdk,
     });
+  }
+
+  async getCatalogCacheKey(_options: FetchCatalogOptions): Promise<string> {
+    // This client discovers through host configuration, independent of project cwd.
+    return "host";
   }
 
   async fetchCatalog(
@@ -2085,6 +2106,7 @@ class ClaudeAgentSession implements AgentSession {
   private lastOptionsModel: string | null = null;
   private lastRuntimeModel: string | null = null;
   private compacting = false;
+  private compactionMarkerOpen = false;
   private queryPumpPromise: Promise<void> | null = null;
   private queryRestartNeeded = false;
   private pendingInterruptAbort = false;
@@ -2094,6 +2116,7 @@ class ClaudeAgentSession implements AgentSession {
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
   private readonly rewindTurnAnchors: ClaudeRewindTurnAnchor[] = [];
+  private readonly rewindSdk: ClaudeRewindSdk;
   private pendingFreshSessionId: string | null = null;
   private recentStderr = "";
   private closed = false;
@@ -2109,6 +2132,7 @@ class ClaudeAgentSession implements AgentSession {
     this.logger = options.logger.child({ agentId: this.agentId });
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
+    this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
     this.contextUsage = new ClaudeContextUsageState(
       findClaudeModel(this.config.model)?.contextWindowMaxTokens,
     );
@@ -2504,9 +2528,8 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   /**
-   * A denied request is the only record the transcript gets. Plans especially:
-   * the pending card is the only place the plan text lives, so losing it means
-   * the user can no longer read what they just declined.
+   * Settle the original call immediately, before waiting for the SDK tool result.
+   * Plan resolution must use the native call ID so it cannot move past a follow-up.
    */
   private recordDeniedPermissionTimeline(
     request: AgentPermissionRequest,
@@ -2527,26 +2550,22 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     if (request.kind === "plan") {
-      let planText: string | null = null;
-      if (typeof request.metadata?.planText === "string") {
-        planText = request.metadata.planText;
-      } else if (typeof request.input?.plan === "string") {
-        planText = request.input.plan;
-      }
-      if (!planText) return;
-      this.pushToolCall({
-        type: "tool_call",
-        name: "plan_approval",
-        callId: request.id,
-        status: "completed",
-        error: null,
-        detail: { type: "plan", text: planText },
-        metadata: {
-          approved: false,
-          actionId: response.selectedActionId ?? "reject",
-        },
-      });
+      this.pushToolCall(
+        mapClaudeFailedToolCall({
+          name: "ExitPlanMode",
+          callId: this.planToolCallId(request),
+          input: request.input,
+          error: response.message ?? "Permission denied",
+          metadata: { actionId: response.selectedActionId ?? "reject" },
+        }),
+      );
     }
+  }
+
+  private planToolCallId(request: AgentPermissionRequest): string {
+    return typeof request.metadata?.toolUseId === "string"
+      ? request.metadata.toolUseId
+      : request.id;
   }
 
   private resolveDeniedPermission(
@@ -2599,8 +2618,8 @@ class ClaudeAgentSession implements AgentSession {
         await this.setMode(targetMode);
         this.pushToolCall(
           mapClaudeCompletedToolCall({
-            name: "plan_approval",
-            callId: pending.request.id,
+            name: "ExitPlanMode",
+            callId: this.planToolCallId(pending.request),
             input: pending.request.input ?? null,
             output: {
               approved: true,
@@ -2754,7 +2773,7 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     await revertClaudeConversation({
-      sdk: realClaudeRewindSdk,
+      sdk: this.rewindSdk,
       sessionId: this.claudeSessionId,
       messageId: target.messageId,
       resolveMessageId: (messageId) => this.resolveClaudeMessageId(messageId),
@@ -3070,17 +3089,18 @@ class ClaudeAgentSession implements AgentSession {
       throw new Error(`Claude rewind target ${messageId} is not in the tracked conversation`);
     }
 
-    if (index === 0) {
-      return { kind: "fresh-session" };
+    // A turn the model never answered — an instant gateway error, or an abort before the first
+    // token — leaves its anchor without an assistant id, and carries no conversation state worth
+    // preserving. Fork at the most recent turn before the target that did answer. Reading only
+    // the immediately preceding anchor let one such turn fail every later rewind in the
+    // conversation.
+    for (let previous = index - 1; previous >= 0; previous -= 1) {
+      const assistantMessageId = this.rewindTurnAnchors[previous]?.assistantMessageId;
+      if (assistantMessageId) {
+        return { kind: "fork", messageId: assistantMessageId };
+      }
     }
-
-    const previousTurn = this.rewindTurnAnchors[index - 1];
-    if (!previousTurn?.assistantMessageId) {
-      throw new Error(
-        `Claude rewind cannot preserve turn ${index} because its assistant response id was not observed`,
-      );
-    }
-    return { kind: "fork", messageId: previousTurn.assistantMessageId };
+    return { kind: "fresh-session" };
   }
 
   private async ensureQuery(): Promise<Query> {
@@ -3368,9 +3388,19 @@ class ClaudeAgentSession implements AgentSession {
           };
         }
     > = [];
+    // Claude Code expands a slash command only when it is the last content block of the user
+    // message. buildAgentPrompt places the typed text ahead of images and rendered attachments,
+    // so a "/command" sent with a pasted link or a screenshot would otherwise reach the model as
+    // literal text instead of the command it names.
+    let typedSlashCommandIndex = -1;
     if (Array.isArray(prompt)) {
       for (const chunk of prompt) {
         if (chunk.type === "text") {
+          // Attachments rendered as text always carry a mimeType; the composer's typed text does
+          // not. Only the typed block can be a slash command the user meant to invoke.
+          if (!("mimeType" in chunk) && this.parseSlashCommandInput(chunk.text)) {
+            typedSlashCommandIndex = content.length;
+          }
           content.push({ type: "text", text: chunk.text });
         } else if (chunk.type === "image") {
           if (isImageMimeType(chunk.mimeType)) {
@@ -3389,6 +3419,10 @@ class ClaudeAgentSession implements AgentSession {
       }
     } else {
       content.push({ type: "text", text: prompt });
+    }
+    if (typedSlashCommandIndex >= 0 && typedSlashCommandIndex < content.length - 1) {
+      const [slashCommand] = content.splice(typedSlashCommandIndex, 1);
+      content.push(slashCommand);
     }
 
     const messageId = randomUUID();
@@ -3562,6 +3596,7 @@ class ClaudeAgentSession implements AgentSession {
     this.activeForegroundInput = null;
     this.cancelCurrentTurn = null;
     this.activeTurnHasAssistantText = false;
+    this.compactionMarkerOpen = false;
     this.syncTurnState("foreground turn terminal");
   }
 
@@ -3573,6 +3608,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     if (terminalSeen) {
+      this.compactionMarkerOpen = false;
       if (this.activeForegroundTurnId) {
         this.activeForegroundTurnId = null;
         this.activeForegroundQuery = null;
@@ -3614,6 +3650,7 @@ class ClaudeAgentSession implements AgentSession {
     this.activeForegroundQuery = null;
     this.activeForegroundInput = null;
     this.activeTurnHasAssistantText = false;
+    this.compactionMarkerOpen = false;
     this.syncTurnState("autonomous turn completed");
   }
 
@@ -4162,6 +4199,9 @@ class ClaudeAgentSession implements AgentSession {
   private buildSubagentToolCallCard(
     declaration: Extract<SubagentObservation, { kind: "declared" }>,
   ): AgentStreamEvent | null {
+    // The launching sidechain already owns and renders this tool call. Mirroring it into the
+    // managed parent's transcript would flatten both the card and the child relationship.
+    if (declaration.parentSubagentId) return null;
     const toolCall = mapClaudeRunningToolCall({
       name: "Task",
       callId: declaration.id,
@@ -4247,15 +4287,22 @@ class ClaudeAgentSession implements AgentSession {
       const status = toObjectRecord(message)?.status;
       if (status === "compacting") {
         this.compacting = true;
-        events.push({
-          type: "timeline",
-          item: { type: "compaction", status: "loading" },
-          provider: "claude",
-        });
+        // Claude Code repeats this status every 30 seconds until the compaction
+        // finishes. Each repeat used to open its own marker, and the app only ever
+        // resolves one of them, so the rest stayed on "Compacting..." forever.
+        if (!this.compactionMarkerOpen) {
+          this.compactionMarkerOpen = true;
+          events.push({
+            type: "timeline",
+            item: { type: "compaction", status: "loading" },
+            provider: "claude",
+          });
+        }
       }
       return;
     }
     if (message.subtype === "compact_boundary") {
+      this.compactionMarkerOpen = false;
       const compactMetadata = readCompactionMetadata(message);
       events.push({
         type: "timeline",
@@ -4283,11 +4330,6 @@ class ClaudeAgentSession implements AgentSession {
     message: Extract<SDKMessage, { type: "system"; subtype: "task_notification" }>,
     events: AgentStreamEvent[],
   ): void {
-    // TODO: subagent timelines are best-effort. Subagent task_notifications
-    // arrive without parent_tool_use_id but with tool_use_id pointing at the
-    // the parent's subagent tool call, so they slip past the sidechain router and pollute
-    // the parent timeline. Drop them here; eventually thread them into the
-    // parent tool call's sub_agent log instead.
     const taskUseId = message.tool_use_id;
     const cachedTool = taskUseId ? this.toolUseCache.get(taskUseId) : undefined;
     // The task protocol owns provider-subagent identity. Workflow launch results arrive before
@@ -4300,6 +4342,15 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     const taskNotificationItem = mapTaskNotificationSystemRecordToToolCall(message);
+    const ownerSubagentId = this.taskProtocolSource.resolveTaskOwner(message.task_id, taskUseId);
+    if (taskNotificationItem && ownerSubagentId) {
+      events.push({
+        type: "provider_subagent",
+        provider: "claude",
+        event: { type: "timeline", id: ownerSubagentId, item: taskNotificationItem },
+      });
+      return;
+    }
     if (taskNotificationItem) {
       events.push({
         type: "timeline",
@@ -4333,11 +4384,7 @@ class ClaudeAgentSession implements AgentSession {
       messageId,
     });
     if (taskNotificationItem) {
-      events.push({
-        type: "timeline",
-        item: taskNotificationItem,
-        provider: "claude",
-      });
+      this.appendUserTaskNotificationEvent(taskNotificationItem, events);
       return;
     }
     if (typeof content === "string" && content.length > 0) {
@@ -4357,6 +4404,28 @@ class ClaudeAgentSession implements AgentSession {
     if (Array.isArray(content)) {
       this.appendUserContentArrayEvents(content, messageId, events);
     }
+  }
+
+  private appendUserTaskNotificationEvent(
+    item: Extract<AgentTimelineItem, { type: "tool_call" }>,
+    events: AgentStreamEvent[],
+  ): void {
+    const taskId = typeof item.metadata?.taskId === "string" ? item.metadata.taskId : undefined;
+    const toolUseId =
+      typeof item.metadata?.toolUseId === "string" ? item.metadata.toolUseId : undefined;
+    if (taskId && this.taskProtocolSource.isDeclaredTask(taskId)) return;
+    const ownerSubagentId = taskId
+      ? this.taskProtocolSource.resolveTaskOwner(taskId, toolUseId)
+      : undefined;
+    if (ownerSubagentId) {
+      events.push({
+        type: "provider_subagent",
+        provider: "claude",
+        event: { type: "timeline", id: ownerSubagentId, item },
+      });
+      return;
+    }
+    events.push({ type: "timeline", item, provider: "claude" });
   }
 
   private appendUserContentArrayEvents(
@@ -4807,27 +4876,24 @@ class ClaudeAgentSession implements AgentSession {
         return;
       }
       const content = fs.readFileSync(historyPath, "utf8");
-      const restoredProviderSubagentIds = this.ingestPersistedSidechains(
+      const replay = this.ingestPersistedSidechains(
         content,
         readClaudeSidechainHistory(historyPath),
       );
-      this.ingestPersistedHistory(content, restoredProviderSubagentIds);
+      this.ingestPersistedHistory(content, replay);
     } catch {
       // ignore history load failures
     }
   }
 
-  private ingestPersistedHistory(
-    content: string,
-    restoredProviderSubagentIds: ReadonlySet<string>,
-  ): void {
+  private ingestPersistedHistory(content: string, replay: ClaudeReplayOwnership): void {
     if (!content) {
       return;
     }
 
     const timeline: PersistedTimelineEntry[] = [];
     for (const line of content.split(/\r?\n/)) {
-      this.ingestPersistedHistoryLine(line, timeline, restoredProviderSubagentIds);
+      this.ingestPersistedHistoryLine(line, timeline, replay);
     }
 
     if (timeline.length > 0) {
@@ -4839,7 +4905,7 @@ class ClaudeAgentSession implements AgentSession {
   private ingestPersistedSidechains(
     parentContent: string,
     sidechains: ClaudeSidechainHistory,
-  ): Set<string> {
+  ): ClaudeReplayOwnership {
     const parentEntries = parseClaudeHistoryRecords(parentContent).filter(
       (entry) => entry.isSidechain !== true,
     );
@@ -4849,16 +4915,18 @@ class ClaudeAgentSession implements AgentSession {
 
     // Replay produces the same observations the live task protocol produces, then folds them
     // with the same function, so identity and status are derived once for both paths.
+    const subagentReplay = observeReplaySubagents({
+      subagents: [...groupClaudeSidechainEntries(sidechainEntries)].map(([agentId, entries]) => ({
+        agentId,
+        meta: sidechains.metaByAgentId.get(agentId) ?? null,
+        entries,
+        parentFacts: readClaudeReplayParentFacts(entries as ClaudeHistoryEntry[]),
+      })),
+      parent: readClaudeReplayParentFacts(parentEntries),
+      convertEntry: (entry) => this.convertHistoryEntry(entry as ClaudeHistoryEntry),
+    });
     const observations = [
-      ...observeReplaySubagents({
-        subagents: [...groupClaudeSidechainEntries(sidechainEntries)].map(([agentId, entries]) => ({
-          agentId,
-          meta: sidechains.metaByAgentId.get(agentId) ?? null,
-          entries,
-        })),
-        parent: readClaudeReplayParentFacts(parentEntries),
-        convertEntry: (entry) => this.convertHistoryEntry(entry as ClaudeHistoryEntry),
-      }),
+      ...subagentReplay.observations,
       ...observeReplayWorkflows({
         workflows: sidechains.workflowContents
           .map(parseClaudeWorkflowRun)
@@ -4880,7 +4948,11 @@ class ClaudeAgentSession implements AgentSession {
         .filter((observation) => observation.kind === "declared")
         .map((observation) => observation.id),
     );
-    if (observations.length === 0) return restoredProviderSubagentIds;
+    const replay = {
+      restoredIds: restoredProviderSubagentIds,
+      toolOwners: subagentReplay.toolOwners,
+    };
+    if (observations.length === 0) return replay;
 
     this.persistedProviderSubagentEvents.push(
       ...foldSubagentObservations(observations).map(
@@ -4892,13 +4964,13 @@ class ClaudeAgentSession implements AgentSession {
       ),
     );
     this.historyPending = true;
-    return restoredProviderSubagentIds;
+    return replay;
   }
 
   private ingestPersistedHistoryLine(
     line: string,
     timeline: PersistedTimelineEntry[],
-    restoredProviderSubagentIds: ReadonlySet<string>,
+    replay: ClaudeReplayOwnership,
   ): void {
     const trimmed = line.trim();
     if (!trimmed) {
@@ -4921,11 +4993,29 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     const notificationToolUseId = readTaskNotificationToolUseIdFromHistoryRecord(entry);
-    if (notificationToolUseId && restoredProviderSubagentIds.has(notificationToolUseId)) {
+    if (notificationToolUseId && replay.restoredIds.has(notificationToolUseId)) {
       return;
     }
 
     const historyTimestamp = normalizeProviderReplayTimestamp(entry.timestamp);
+    const notificationOwner = notificationToolUseId
+      ? replay.toolOwners.get(notificationToolUseId)
+      : undefined;
+    if (notificationOwner) {
+      for (const item of this.convertHistoryEntry(entry)) {
+        this.persistedProviderSubagentEvents.push({
+          type: "provider_subagent",
+          provider: "claude",
+          event: {
+            type: "timeline",
+            id: notificationOwner,
+            item,
+            timestamp: historyTimestamp ?? undefined,
+          },
+        });
+      }
+      return;
+    }
     const taskSnapshot = this.taskState.observe(entry);
     const items = [...(taskSnapshot ? [taskSnapshot] : []), ...this.convertHistoryEntry(entry)];
     const isVisibleUserEntry =

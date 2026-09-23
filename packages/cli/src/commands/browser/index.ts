@@ -3,8 +3,9 @@ import { promisify } from "node:util";
 import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { WorkspaceLayoutPosition } from "@getpaseo/protocol/workspace-layout/rpc-schemas";
 import { Command } from "commander";
+import type { CommandOptions } from "../../output/index.js";
 import { connectToDaemon } from "../../utils/client.js";
-import { addDaemonHostOption } from "../../utils/command-options.js";
+import { addDaemonHostOption, withGlobalOptions } from "../../utils/command-options.js";
 import { parsePosition, placement } from "../layout/index.js";
 import {
   requireBrowserWorkspaceId,
@@ -13,10 +14,7 @@ import {
   validateServiceUrl,
 } from "./open-options.js";
 
-interface BrowserOptions {
-  host?: string;
-  json?: boolean;
-}
+interface BrowserOptions extends CommandOptions {}
 
 interface BrowserOpenOptions extends BrowserOptions {
   external?: boolean;
@@ -42,7 +40,7 @@ async function execute(
   command: BrowserAutomationCommand,
   requestOptions?: { workspaceId?: string; timeoutMs?: number },
 ) {
-  const client = await connectToDaemon({ host: options.host });
+  const client = await connectToDaemon({ target: options.daemonTarget });
   try {
     const features = client.getLastServerInfoMessage()?.features;
     if (features?.browserCommandRpc !== true) {
@@ -87,8 +85,10 @@ export function createBrowserCommand(): Command {
       .command("profiles")
       .description("List browser profiles")
       .option("--json", "Output JSON"),
-  ).action(async (options: BrowserOptions) =>
-    print(await execute(options, { command: "list_profiles", args: {} }), options.json),
+  ).action(
+    withGlobalOptions(async (options: BrowserOptions) =>
+      print(await execute(options, { command: "list_profiles", args: {} }), options.json),
+    ),
   );
   addDaemonHostOption(
     browser
@@ -96,8 +96,10 @@ export function createBrowserCommand(): Command {
       .description("Create an isolated browser profile")
       .argument("<name>")
       .option("--json", "Output JSON"),
-  ).action(async (name: string, options: BrowserOptions) =>
-    print(await execute(options, { command: "create_profile", args: { name } }), options.json),
+  ).action(
+    withGlobalOptions(async (name: string, options: BrowserOptions) =>
+      print(await execute(options, { command: "create_profile", args: { name } }), options.json),
+    ),
   );
   addDaemonHostOption(
     browser
@@ -105,16 +107,20 @@ export function createBrowserCommand(): Command {
       .description("Delete a named browser profile")
       .argument("<profile>")
       .option("--json", "Output JSON"),
-  ).action(async (profile: string, options: BrowserOptions) =>
-    print(await execute(options, { command: "delete_profile", args: { profile } }), options.json),
+  ).action(
+    withGlobalOptions(async (profile: string, options: BrowserOptions) =>
+      print(await execute(options, { command: "delete_profile", args: { profile } }), options.json),
+    ),
   );
   addDaemonHostOption(
     browser
       .command("import-sources")
       .description("List installed browser profiles available for import")
       .option("--json", "Output JSON"),
-  ).action(async (options: BrowserOptions) =>
-    print(await execute(options, { command: "list_import_sources", args: {} }), options.json),
+  ).action(
+    withGlobalOptions(async (options: BrowserOptions) =>
+      print(await execute(options, { command: "list_import_sources", args: {} }), options.json),
+    ),
   );
   addDaemonHostOption(
     browser
@@ -134,34 +140,36 @@ export function createBrowserCommand(): Command {
       .option("--confirm-merge", "Confirm merging into existing Default browser data")
       .option("--json", "Output JSON"),
   ).action(
-    async (
-      options: BrowserOptions & {
-        sourceBrowser: string;
-        sourceProfile: string;
-        domains: string;
-        categories: string;
-        confirmMerge?: boolean;
+    withGlobalOptions(
+      async (
+        options: BrowserOptions & {
+          sourceBrowser: string;
+          sourceProfile: string;
+          domains: string;
+          categories: string;
+          confirmMerge?: boolean;
+        },
+      ) => {
+        const categories = options.categories.split(",").map((value) => value.trim());
+        const allowedCategories = new Set(["cookies", "localStorage", "sessionStorage"]);
+        if (categories.some((category) => !allowedCategories.has(category))) {
+          throw new Error("Categories must be cookies, localStorage, or sessionStorage.");
+        }
+        return print(
+          await execute(options, {
+            command: "import_browser_data",
+            args: {
+              sourceBrowserId: options.sourceBrowser,
+              sourceProfileId: options.sourceProfile,
+              domains: options.domains.split(",").map((value) => value.trim()),
+              categories: categories as Array<"cookies" | "localStorage" | "sessionStorage">,
+              confirmMerge: options.confirmMerge ?? false,
+            },
+          }),
+          options.json,
+        );
       },
-    ) => {
-      const categories = options.categories.split(",").map((value) => value.trim());
-      const allowedCategories = new Set(["cookies", "localStorage", "sessionStorage"]);
-      if (categories.some((category) => !allowedCategories.has(category))) {
-        throw new Error("Categories must be cookies, localStorage, or sessionStorage.");
-      }
-      return print(
-        await execute(options, {
-          command: "import_browser_data",
-          args: {
-            sourceBrowserId: options.sourceBrowser,
-            sourceProfileId: options.sourceProfile,
-            domains: options.domains.split(",").map((value) => value.trim()),
-            categories: categories as Array<"cookies" | "localStorage" | "sessionStorage">,
-            confirmMerge: options.confirmMerge ?? false,
-          },
-        }),
-        options.json,
-      );
-    },
+    ),
   );
 
   addDaemonHostOption(
@@ -172,20 +180,23 @@ export function createBrowserCommand(): Command {
       .option("--workspace <workspaceId>", "Workspace ID (defaults to PASEO_WORKSPACE_ID)")
       .option("--wait", "Wait for the user's policy choice and final open result")
       .option("--json", "Output JSON"),
-  ).action(async (url: string, options: BrowserOptions & { workspace?: string; wait?: boolean }) =>
-    print(
-      await execute(
-        options,
-        {
-          command: "open_service_url",
-          args: { url: validateServiceUrl(url), waitForResult: options.wait === true },
-        },
-        {
-          workspaceId: requireBrowserWorkspaceId(options.workspace),
-          ...(options.wait ? { timeoutMs: 5 * 60_000 + 5_000 } : {}),
-        },
-      ),
-      options.json,
+  ).action(
+    withGlobalOptions(
+      async (url: string, options: BrowserOptions & { workspace?: string; wait?: boolean }) =>
+        print(
+          await execute(
+            options,
+            {
+              command: "open_service_url",
+              args: { url: validateServiceUrl(url), waitForResult: options.wait === true },
+            },
+            {
+              workspaceId: requireBrowserWorkspaceId(options.workspace),
+              ...(options.wait ? { timeoutMs: 5 * 60_000 + 5_000 } : {}),
+            },
+          ),
+          options.json,
+        ),
     ),
   );
 
@@ -201,32 +212,34 @@ export function createBrowserCommand(): Command {
       .option("--target-pane <pane-id>", "Pane to split")
       .option("--external", "Open in the system browser")
       .option("--json", "Output JSON"),
-  ).action(async (url: string | undefined, options: BrowserOpenOptions) => {
-    if (options.external) {
-      if (options.profile || options.pane || options.split || options.targetPane) {
-        throw new Error("--external cannot be combined with profile or pane placement options");
+  ).action(
+    withGlobalOptions(async (url: string | undefined, options: BrowserOpenOptions) => {
+      if (options.external) {
+        if (options.profile || options.pane || options.split || options.targetPane) {
+          throw new Error("--external cannot be combined with profile or pane placement options");
+        }
+        return print(
+          await openExternalBrowser(validateExternalBrowserOpen(url, options)),
+          options.json,
+        );
       }
+      const targetPlacement = placement(options);
       return print(
-        await openExternalBrowser(validateExternalBrowserOpen(url, options)),
+        await execute(
+          options,
+          {
+            command: "new_tab",
+            args: {
+              ...(url ? { url } : {}),
+              ...(options.profile ? { profile: options.profile } : {}),
+              ...(targetPlacement ? { placement: targetPlacement } : {}),
+            },
+          },
+          { workspaceId: resolveBrowserWorkspaceId(options.workspace) },
+        ),
         options.json,
       );
-    }
-    const targetPlacement = placement(options);
-    return print(
-      await execute(
-        options,
-        {
-          command: "new_tab",
-          args: {
-            ...(url ? { url } : {}),
-            ...(options.profile ? { profile: options.profile } : {}),
-            ...(targetPlacement ? { placement: targetPlacement } : {}),
-          },
-        },
-        { workspaceId: resolveBrowserWorkspaceId(options.workspace) },
-      ),
-      options.json,
-    );
-  });
+    }),
+  );
   return browser;
 }

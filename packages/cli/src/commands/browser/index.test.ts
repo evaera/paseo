@@ -37,6 +37,7 @@ describe("browser command", () => {
       "--confirm-merge",
       "--json",
       "--host",
+      "--home",
     ]);
     expect(
       importCommand?.options.find((option) => option.long === "--domains")?.description,
