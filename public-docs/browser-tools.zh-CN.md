@@ -11,6 +11,7 @@ nav: 工具参考
 通用概念：
 
 - **`browserId`** 标识一个标签页。它来自 `browser_new_tab` 或 `browser_list_tabs`，所有针对标签页的工具都需要它。
+- **`profileId`** 标识一个持久化的浏览器配置文件。标签页结果同时包含 `profileId` 和仅用于显示的 `profileName`；需要沿用同一组 cookie 时，把 ID 传回 `browser_new_tab`。
 - **`ref`** 标识一个元素，例如 `@e3`。引用来自同一标签页最新的 `browser_snapshot`，页面变化后会失效；过期的引用会返回错误，而不是作用到错误的元素上。
 - 每个结果都会报告命令执行期间页面打开的**对话框**（alert 会被接受；confirm/prompt/beforeunload 会被取消）。
 
@@ -18,12 +19,22 @@ nav: 工具参考
 
 ## 标签页 {#tabs}
 
-| 工具                | 参数                       | 用途                                              |
-| ------------------- | -------------------------- | ------------------------------------------------- |
-| `browser_list_tabs` | —                          | 列出 Agent 工作区在所有已连接宿主上打开的标签页。 |
-| `browser_new_tab`   | `url?`                     | 在后台打开一个标签页并返回它的 `browserId`。      |
-| `browser_close_tab` | `browserId`                | 关闭标签页并清理它的 webview。                    |
-| `browser_resize`    | `browserId, width, height` | 调整标签页视口大小，用手机或平板的尺寸检查布局。  |
+| 工具                | 参数                       | 用途                                                             |
+| ------------------- | -------------------------- | ---------------------------------------------------------------- |
+| `browser_list_tabs` | —                          | 列出打开的标签页及其 `browserId`、`profileId` 和 `profileName`。 |
+| `browser_new_tab`   | `url?, profile?`           | 在后台打开标签页，可按名称或 ID 指定配置文件。                   |
+| `browser_close_tab` | `browserId`                | 关闭标签页并清理它的 webview。                                   |
+| `browser_resize`    | `browserId, width, height` | 调整标签页视口大小，用手机或平板的尺寸检查布局。                 |
+
+## 配置文件 {#profiles}
+
+配置文件隔离 cookie、登录状态、缓存和站点存储。`Default` 始终存在且不能删除。创建和删除配置文件需要恰好一个已连接的桌面浏览器宿主。删除时会在该宿主上弹出原生确认框，由 Agent 或 CLI 发起的删除也一样。
+
+| 工具                     | 参数      | 用途                                         |
+| ------------------------ | --------- | -------------------------------------------- |
+| `browser_list_profiles`  | —         | 列出配置文件的名称和 ID，Default 排在最前。  |
+| `browser_create_profile` | `name`    | 创建一个空的持久化配置文件。                 |
+| `browser_delete_profile` | `profile` | 按名称或 ID 请求删除，包括其全部浏览器数据。 |
 
 ## 读取页面 {#reading-the-page}
 

@@ -2,7 +2,6 @@ import { accessSync, constants, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { delimiter, dirname, join, resolve } from "node:path";
 
-const require = createRequire(import.meta.url);
 const PASEO_CLI_BIN_ENTRY = "@getpaseo/cli/bin/paseo";
 const BROWSER_OVERRIDE_ENV = "PASEO_BROWSER_OPEN_OVERRIDE";
 
@@ -59,7 +58,11 @@ export function resolveBrowserOpenWrapperPath(
   let cliEntrypoint = options.cliEntrypoint;
   if (cliEntrypoint === undefined) {
     try {
-      cliEntrypoint = require.resolve(PASEO_CLI_BIN_ENTRY);
+      // Resolve from the entry script, not import.meta: Playwright loads this module through
+      // paseo-env as CommonJS. The desktop daemon sets PASEO_CLI and skips this fallback.
+      cliEntrypoint = createRequire(resolve(process.argv[1] ?? "index.js")).resolve(
+        PASEO_CLI_BIN_ENTRY,
+      );
     } catch {
       cliEntrypoint = null;
     }

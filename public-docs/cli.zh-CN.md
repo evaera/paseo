@@ -86,6 +86,20 @@ JSON 输出不会包含连接凭据。
 只有确认目标已改变后，才应同时使用 `--replace-identity` 和 `--connection`。
 `rm` 删除已保存的连接；该主机上的 Agent 和工作区会继续运行。
 
+## 浏览器配置文件和标签页 {#browser-profiles-and-tabs}
+
+在终端中管理桌面浏览器宿主：
+
+```bash
+paseo browser profiles
+paseo browser profiles --json
+paseo browser create-profile "Work"
+paseo browser open https://example.com --profile "Work" --workspace <workspace-id>
+paseo browser delete-profile "Work"
+```
+
+配置文件参数接受名称或 ID。JSON 格式的标签页结果包含 `profileId` 和 `profileName`，脚本可以把稳定的 ID 传回 `paseo browser open --profile`。Default 不能删除。每次删除请求都会在已连接的桌面应用中弹出一个原生确认框，CLI 和 Agent 发起的请求也一样。配置文件命令要求恰好一个已连接的浏览器宿主。
+
 ## Provider 诊断 {#provider-diagnostics}
 
 让 daemon 检查它实际使用的 Provider 环境：
