@@ -143,6 +143,52 @@ describe("assistant selection copy ranges", () => {
     expect(copiedMarkdown(selectRange(blocks[0]!, 6, blocks[1]!, 6))).toBe("paragraph.\n\nSecond");
   });
 
+  // Chrome anchors a drag that starts in the gap below an image at the start of the
+  // image's rendered internals: the background-image layer, ahead of the hidden `img`.
+  // Only the text after it is highlighted.
+  it("leaves out an image when the selection starts in the gap below it", () => {
+    const transcript = mountTranscript([
+      {
+        messageId: "message-1",
+        blocks: [
+          "Before the image.",
+          '<div data-paseo-markdown-tag="img" data-paseo-markdown-src="https://example.test/chart.png" data-paseo-markdown-alt="chart"><div><div style="background-image: url(blob:https://example.test/preview)"></div><img src="blob:https://example.test/preview" alt=""></div></div>',
+          "After the image.",
+        ],
+      },
+    ]);
+    const frame = fixtureElement(transcript, '[data-paseo-markdown-tag="img"]');
+    const range = document.createRange();
+    range.setStart(frame.firstElementChild!.firstElementChild!, 0);
+    range.setEnd(textNode(fixtureElement(transcript, '[data-paseo-markdown-tag="p"]', 2)), 9);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    expect(copiedMarkdown(selection)).toBe("After the");
+  });
+
+  it("keeps a failed image when the selection starts in its error text", () => {
+    const transcript = mountTranscript([
+      {
+        messageId: "message-1",
+        blocks: [
+          '<div data-paseo-markdown-tag="img" data-paseo-markdown-src="https://example.test/chart.png" data-paseo-markdown-alt="chart"><div>Image failed to load</div></div>',
+          "After the image.",
+        ],
+      },
+    ]);
+    const frame = fixtureElement(transcript, '[data-paseo-markdown-tag="img"]');
+    const selection = selectRange(
+      frame.firstElementChild!,
+      6,
+      fixtureElement(transcript, '[data-paseo-markdown-tag="p"]', 1),
+      9,
+    );
+
+    expect(copiedMarkdown(selection)).toBe("![chart](https://example.test/chart.png)\n\nAfter the");
+  });
+
   it("does not replace the browser clipboard for a selection reaching a second message", () => {
     const transcript = mountTranscript([
       { messageId: "message-1", blocks: ["First paragraph.", "Second paragraph."] },
@@ -411,6 +457,20 @@ describe("assistant selection copy ranges", () => {
     expect(content?.html).not.toContain("<pre>");
   });
 
+  it("copies an image as its Markdown when the selection stays inside the rendered image", () => {
+    const message = mountFixture();
+    const frame = document.createElement("div");
+    frame.setAttribute("data-paseo-markdown-tag", "img");
+    frame.setAttribute("data-paseo-markdown-src", "https://example.test/chart.png");
+    frame.setAttribute("data-paseo-markdown-alt", "chart");
+    frame.innerHTML = '<div><div><img src="blob:https://example.test/preview" alt=""></div></div>';
+    message.prepend(frame);
+
+    expect(copiedMarkdown(selectNodeContents(fixtureElement(frame, "img").parentElement!))).toBe(
+      "![chart](https://example.test/chart.png)",
+    );
+  });
+
   it("copies code without a fence when every character is selected inside the block", () => {
     const message = mountFixture();
     const blockCode = fixtureElement(
@@ -674,7 +734,9 @@ describe("assistant selection copy inside highlighted code", () => {
     const message = mountHighlighted();
     const image = document.createElement("div");
     image.setAttribute("data-paseo-markdown-tag", "p");
-    image.innerHTML = '<div><img src="https://example.test/chart.png" alt="chart"></div>';
+    // The rendered `img` shows a preview URL with no alt text; the frame carries the Markdown.
+    image.innerHTML =
+      '<div data-paseo-markdown-tag="img" data-paseo-markdown-src="https://example.test/chart.png" data-paseo-markdown-alt="chart"><img src="blob:https://example.test/preview" alt=""></div>';
     message.querySelector('[data-paseo-markdown-tag="pre"]')!.before(image);
     const before = tokenText(message, "Before the block.");
 
@@ -697,4 +759,59 @@ describe("assistant selection copy inside highlighted code", () => {
       "```typescript\nconst answer = 1;\n  if (answer) {\n    doThing();\n```\n\nAfter the block.",
     );
   });
+});
+
+describe("semantic library output", () => {
+  it("copies a partial strong span as plain text", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      '<div data-testid="assistant-message"><p>Before <strong>bold text</strong> after</p></div>';
+    document.body.append(host);
+    const text = host.querySelector("strong")!.firstChild!;
+    const range = document.createRange();
+    range.setStart(text, 1);
+    range.setEnd(text, 4);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(createAssistantSelectionClipboardContent(selection)?.plainText).toBe("old");
+    expect(createAssistantSelectionClipboardContent(selection)?.html).not.toContain("<strong>");
+    host.remove();
+  });
+});
+
+it("copies native semantic ordered lists with their original numbers", () => {
+  const host = document.createElement("div");
+  host.innerHTML =
+    '<div data-testid="assistant-message"><ol start="3"><li>Third item</li><li>Fourth item</li></ol></div>';
+  document.body.append(host);
+  const selection = selectNodeContents(host.querySelector("ol")!);
+  const content = createAssistantSelectionClipboardContent(selection);
+  expect(content?.plainText).toContain("3. Third item");
+  expect(content?.plainText).toContain("4. Fourth item");
+  host.remove();
+});
+
+it("copies a selection inside semantic inline code without Markdown escaping", () => {
+  const message = mountFixture();
+  message.innerHTML = "<p>Run <code>apply_patch</code> now.</p>";
+  const code = fixtureElement(message, "code");
+  expect(createAssistantSelectionClipboardContent(selectText(code, 0, 11))?.plainText).toBe(
+    "apply_patch",
+  );
+});
+
+it("copies a workspace image path instead of its temporary display URL", () => {
+  const message = mountFixture();
+  const sources = JSON.stringify({ "blob:preview": "assets/chart.png" });
+  message.innerHTML = '<div><img src="blob:preview" alt="chart"></div>';
+  message.firstElementChild!.setAttribute("data-paseo-markdown-image-sources", sources);
+  const selection = window.getSelection()!;
+  const range = document.createRange();
+  range.selectNode(message.querySelector("img")!);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  expect(createAssistantSelectionClipboardContent(selection)?.plainText).toBe(
+    "![chart](assets/chart.png)",
+  );
 });

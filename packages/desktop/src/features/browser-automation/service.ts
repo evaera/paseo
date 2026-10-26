@@ -17,7 +17,6 @@ import {
   dispatchTrustedHover,
   dispatchTrustedKey,
   dispatchTrustedScroll,
-  dispatchTrustedText,
   type ClickInputOptions,
   type IsolatedKeyboardInputEvent,
 } from "./trusted-input.js";
@@ -39,6 +38,9 @@ export interface TabContents {
   invalidate(): void;
   withFrameProduction<T>(capture: () => Promise<T>): Promise<T>;
   sendInputEvent(event: IsolatedKeyboardInputEvent): void;
+  // Commits text into this tab's focused element. CDP Input.insertText would
+  // commit into whichever element has focus in the Paseo window instead.
+  insertText(text: string): Promise<void>;
   getConsoleMessages?(): BrowserAutomationConsoleLogEntry[];
   captureDialogs?<T>(
     task: () => Promise<T>,
@@ -1100,7 +1102,7 @@ async function executeType(
       }
       await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point);
     }
-    await dispatchTrustedText(cdpSender(target.contents), text);
+    await target.contents.insertText(text);
     return {
       requestId,
       ok: true,

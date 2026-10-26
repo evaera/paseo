@@ -1,3 +1,4 @@
+import { ComposerEditingScope } from "@/composer/editing-session";
 import React, { useMemo, type ComponentType } from "react";
 import invariant from "tiny-invariant";
 import {
@@ -26,7 +27,7 @@ export interface BuildWorkspacePaneContentModelInput {
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   host: PaneHost;
-  fileNavigationRevision?: number;
+  panelRevision?: number;
   onOpenTab: (target: WorkspaceTabDescriptor["target"]) => void;
   onOpenPreferredTarget: (
     target: WorkspaceTabDescriptor["target"],
@@ -46,7 +47,7 @@ export function buildWorkspacePaneContentModel({
   normalizedServerId,
   normalizedWorkspaceId,
   host,
-  fileNavigationRevision,
+  panelRevision,
   onOpenTab,
   onOpenPreferredTarget,
   onOpenTargetToSide,
@@ -70,7 +71,7 @@ export function buildWorkspacePaneContentModel({
       tabId: tab.tabId,
       target: tab.target,
       state: tab.state,
-      fileNavigationRevision,
+      panelRevision,
       openTab: onOpenTab,
       openPreferredTarget: onOpenPreferredTarget,
       openTargetToSide: onOpenTargetToSide,
@@ -115,7 +116,7 @@ export function WorkspacePaneContent({
       tabId: paneContextValue.tabId,
       target: paneContextValue.target,
       state: paneContextValue.state,
-      fileNavigationRevision: paneContextValue.fileNavigationRevision,
+      panelRevision: paneContextValue.panelRevision,
       openTab,
       openPreferredTarget,
       openTargetToSide: paneContextValue.openTargetToSide ? openTargetToSide : undefined,
@@ -135,7 +136,7 @@ export function WorkspacePaneContent({
       openPreferredTarget,
       openTargetToSide,
       paneContextValue.serverId,
-      paneContextValue.fileNavigationRevision,
+      paneContextValue.panelRevision,
       paneContextValue.tabId,
       paneContextValue.target,
       paneContextValue.state,
@@ -162,7 +163,12 @@ export function WorkspacePaneContent({
     >
       <PaneProvider value={stablePaneContextValue}>
         <PaneFocusProvider value={paneFocusValue}>
-          <Component key={key} />
+          <ComposerEditingScope
+            tabId={paneContextValue.tabId}
+            targetKey={JSON.stringify(paneContextValue.target)}
+          >
+            <Component key={key} />
+          </ComposerEditingScope>
         </PaneFocusProvider>
       </PaneProvider>
     </RenderProfile>

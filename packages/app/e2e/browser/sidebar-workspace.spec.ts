@@ -429,7 +429,7 @@ test.describe("Sidebar workspace list", () => {
     }
   });
 
-  test("workspace hover card stays open for a keyboard-focused row", async ({ page }) => {
+  test("workspace hover card follows keyboard focus on a row", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-keyboard-" });
 
     try {
@@ -444,6 +444,11 @@ test.describe("Sidebar workspace list", () => {
       await movePointerAwayFromWorkspaceHoverCard(page);
       await expectWorkspaceHoverCardStaysOpen(page);
       await page.keyboard.press("Escape");
+      await expectWorkspaceHoverCardClosed(page);
+
+      await focusWorkspaceRowWithKeyboard(page, workspace.workspaceId);
+      await expectWorkspaceHoverCardOpen(page);
+      await page.keyboard.press("Tab");
       await expectWorkspaceHoverCardClosed(page);
     } finally {
       await workspace.cleanup();
@@ -497,6 +502,17 @@ test.describe("Mobile sidebar panelState transition", () => {
     await expectMobileAgentSidebarVisible(page);
     await closeMobileAgentSidebar(page);
     await expectMobileAgentSidebarHidden(page);
+  });
+
+  test("places the close button beside the first nav row instead of over it", async ({ page }) => {
+    await gotoAppShell(page);
+    await openMobileAgentSidebar(page);
+    await expectMobileAgentSidebarVisible(page);
+
+    const firstRow = await page.getByTestId("sidebar-global-new-workspace").boundingBox();
+    const closeButton = await page.getByTestId("sidebar-close").boundingBox();
+    if (!firstRow || !closeButton) throw new Error("first nav row and close button must render");
+    expect(closeButton.x).toBeGreaterThanOrEqual(firstRow.x + firstRow.width);
   });
 
   test("keeps a pinned workspace rendered while the retained sidebar is closed", async ({
@@ -608,7 +624,9 @@ test.describe("Half-screen desktop layout", () => {
     await expect(page.getByTestId("sidebar-settings")).not.toBeVisible();
   });
 
-  test("keeps app navigation beside the Explorer pane", async ({ page }) => {
+  test("yields app navigation to Explorer and restores it when Explorer closes", async ({
+    page,
+  }) => {
     const workspace = await seedWorkspace({ repoPrefix: "sidebar-half-screen-explorer-" });
 
     try {
@@ -620,7 +638,7 @@ test.describe("Half-screen desktop layout", () => {
       const explorerToggle = page.getByTestId("workspace-explorer-toggle").first();
       await expect(page.getByTestId("workspace-tab-files").filter({ visible: true })).toBeVisible();
       await expect(explorerToggle).toHaveAccessibleName("Close Explorer sidebar");
-      await expect(page.getByTestId("sidebar-global-new-workspace")).toBeVisible();
+      await expect(page.getByTestId("sidebar-global-new-workspace")).not.toBeVisible();
       await expect(page.getByTestId("workspace-explorer-sidebar")).toBeVisible();
       await expect(
         page
