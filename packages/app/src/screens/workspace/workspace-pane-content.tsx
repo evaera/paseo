@@ -9,7 +9,6 @@ import {
 } from "@/panels/pane-context";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { getPanelRegistration } from "@/panels/panel-registry";
-import { ensurePanelsRegistered } from "@/panels/register-panels";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import { RenderProfile } from "@/utils/render-profiler";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
@@ -58,7 +57,6 @@ export function buildWorkspacePaneContentModel({
   onOpenUrlInBrowserTab,
   onOpenImportSheet,
 }: BuildWorkspacePaneContentModelInput): WorkspacePaneContentModel {
-  ensurePanelsRegistered();
   const registration = getPanelRegistration(tab.kind);
   invariant(registration, `No panel registration for kind: ${tab.kind}`);
   return {
